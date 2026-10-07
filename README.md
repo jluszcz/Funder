@@ -16,8 +16,9 @@ funder backup               # upload the database to S3 if a backup is due
 cargo run --features import -- import <workbook>   # one-time: load the old spreadsheet
 ```
 
-`1` shows the Lots: every purchase, what is left of it, and its gain at the price `p` sets. `a`, `e`,
-and `d` add, edit, and delete a lot; `?` lists every key.
+`1` shows the Lots: every purchase with shares left, what is left of it, and its gain at the price
+`p` sets; `s` shows the used-up ones too. `a`, `e`, and `d` add, edit, and delete a lot; `?` lists
+every key.
 
 `2` shows the Donations. `n` plans one from a dollar target, drawing on the long-term lots with the
 highest gain; `r` records it once the shares have moved; `c` marks it claimed.

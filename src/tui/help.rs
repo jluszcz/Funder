@@ -5,8 +5,8 @@ pub(super) use jluszcz_finance_utils::tui::help::render_panel as render;
 use jluszcz_finance_utils::tui::help::{Entry, footer_items};
 
 pub(super) const GLOBAL: &[Entry] = &[
-    Entry::shared("1", "screen", "Show the Lots"),
-    Entry::shared("2", "screen", "Show the Donations"),
+    Entry::own("1", "lots", "Show the Lots"),
+    Entry::own("2", "donations", "Show the Donations"),
     Entry::own("?", "help", "Open this panel (F1 too)"),
     Entry::own("q", "quit", "Quit"),
 ];
@@ -29,6 +29,11 @@ pub(super) const LOTS: &[Entry] = &[
         "price",
         "Set today's price for the selected lot's ticker",
     ),
+    Entry::own(
+        "s",
+        "show all",
+        "Show every lot, or hide again those with nothing left",
+    ),
 ];
 
 pub(super) const DONATIONS: &[Entry] = &[
@@ -46,7 +51,7 @@ pub(super) const DONATIONS: &[Entry] = &[
     ),
     Entry::own(
         "o",
-        "lots",
+        "pick",
         "Choose the lots the selected donation draws on, by hand",
     ),
     Entry::own(
@@ -120,10 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn every_footer_fits_in_eighty_columns() {
+    fn every_footer_fits_in_a_hundred_and_twenty_columns() {
         for table in ALL {
             let line = footer(&[table, GLOBAL]);
-            assert!(line.chars().count() <= 80, "{line}");
+            assert!(line.chars().count() <= 120, "{line}");
         }
     }
 

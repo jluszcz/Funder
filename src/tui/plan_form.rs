@@ -5,6 +5,7 @@ use super::form::{Field, Form, Outcome};
 use crate::calc::plan_shares;
 use crate::db::Db;
 use crate::donate::{self, Plan};
+use crate::money::usd;
 use crate::shares::Shares;
 use anyhow::Result;
 use chrono::NaiveDate;
@@ -95,7 +96,9 @@ impl PlanForm {
                 };
                 let mut notes = vec![format!(
                     "{lots} · basis {} · value ~{} · gain ~{}",
-                    t.basis, t.value, t.gain
+                    usd(t.basis),
+                    usd(t.value),
+                    usd(t.gain)
                 )];
                 if plan.selection.shortfall > Shares::ZERO {
                     notes.push(format!(
