@@ -44,6 +44,9 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | Path | Responsibility |
 |---|---|
 | `src/money.rs` | `Cents`, re-exported from finance-utils. |
+| `src/shares.rs` | `Shares(i64)`, thousandths of a share, and `round_div`, the one rounding rule (half away from zero, saturating). |
+| `src/id.rs` | `LotId`, `DonationId`: one id type per table. |
+| `src/ticker.rs` | `normalize`: a ticker as stored, trimmed and upper-case. |
 | `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI. |
 
 ## Testing conventions
