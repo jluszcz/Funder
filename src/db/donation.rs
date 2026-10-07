@@ -194,8 +194,10 @@ impl Db {
     }
 
     pub fn delete_donation(&self, id: DonationId) -> Result<()> {
-        self.conn
+        let deleted = self
+            .conn
             .execute("DELETE FROM donation WHERE id = ?1", [id.0])?;
+        ensure!(deleted == 1, "donation {} is gone", id.0);
         Ok(())
     }
 
@@ -225,11 +227,18 @@ impl Db {
                 .map(|lot| insert_lot(conn, lot))
                 .collect::<Result<Vec<_>>>()?;
             for d in &bulk.donations {
+                ensure!(
+                    d.input.value.is_some() || !d.claimed,
+                    "the plan of {} cannot be claimed",
+                    d.input.date
+                );
                 let picks = d
                     .picks
                     .iter()
                     .map(|&(i, shares)| {
-                        let lot = *ids.get(i).context("an import pick names no lot")?;
+                        let lot = *ids.get(i).with_context(|| {
+                            format!("a pick of the donation of {} names no lot", d.input.date)
+                        })?;
                         Ok(Pick {
                             lot,
                             shares,
@@ -597,5 +606,84 @@ mod tests {
         db.load(&bulk(), true).unwrap();
         assert_eq!(db.lots().unwrap().len(), 1);
         assert_eq!(db.donations().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_rewrite_leaves_the_old_allocations_and_claim_intact() {
+        let (db, a, _) = two_lots();
+        let id = db
+            .write_donation(None, &input(4, Some(20_000)), &[pick(a, 4)])
+            .unwrap();
+        db.set_claimed(id, true).unwrap();
+        assert!(
+            db.write_donation(Some(id), &input(11, Some(55_000)), &[pick(a, 11)])
+                .is_err()
+        );
+        let allocations = db.allocations(id).unwrap();
+        assert_eq!(allocations.len(), 1);
+        assert_eq!(allocations[0].shares, Shares::whole(4));
+        assert!(db.donation(id).unwrap().claimed);
+    }
+
+    #[test]
+    fn rewriting_a_recorded_donation_as_a_plan_clears_its_claim() {
+        let (db, a, _) = two_lots();
+        let id = db
+            .write_donation(None, &input(4, Some(20_000)), &[pick(a, 4)])
+            .unwrap();
+        db.set_claimed(id, true).unwrap();
+        db.write_donation(Some(id), &input(4, None), &[pick(a, 4)])
+            .unwrap();
+        let d = db.donation(id).unwrap();
+        assert!(d.is_plan());
+        assert!(!d.claimed);
+    }
+
+    #[test]
+    fn rewriting_a_donation_that_is_gone_is_an_error() {
+        let (db, a, _) = two_lots();
+        let err = db
+            .write_donation(Some(DonationId(9)), &input(1, Some(5_000)), &[pick(a, 1)])
+            .unwrap_err();
+        assert!(err.to_string().contains("gone"), "{err}");
+    }
+
+    #[test]
+    fn deleting_a_donation_that_is_gone_is_an_error() {
+        let db = open_in_memory().unwrap();
+        let err = db.delete_donation(DonationId(9)).unwrap_err();
+        assert!(err.to_string().contains("gone"), "{err}");
+    }
+
+    #[test]
+    fn a_replacing_load_keeps_prices() {
+        let db = open_in_memory().unwrap();
+        db.set_price("TDF45", day(2026, 1, 2), Cents(5_000))
+            .unwrap();
+        db.load(&bulk(), false).unwrap();
+        db.load(&bulk(), true).unwrap();
+        assert_eq!(db.current_prices().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn an_imported_plan_cannot_be_claimed() {
+        let db = open_in_memory().unwrap();
+        let mut b = bulk();
+        b.donations[0].input.value = None;
+        let err = db.load(&b, false).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("plan of 2026-01-05 cannot be claimed"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn an_import_pick_naming_no_lot_names_the_donation() {
+        let db = open_in_memory().unwrap();
+        let mut b = bulk();
+        b.donations[0].picks = vec![(5, Shares::whole(4))];
+        let err = db.load(&b, false).unwrap_err();
+        assert!(err.to_string().contains("donation of 2026-01-05"), "{err}");
     }
 }
