@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+
+    paths:
+      - '.github/workflows/**'
+      - 'Cargo**'
+      - 'src/**/*.rs'
+      - 'tests/**/*.rs'
+
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
+
+  # `import` is off by default; this job is what keeps it compiling.
+  ci-all-features:
+    uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
+    with:
+      all-features: true
