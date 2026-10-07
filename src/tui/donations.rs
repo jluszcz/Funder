@@ -1,7 +1,8 @@
 //! The Donations screen: every donation and plan, and the lots the selected
 //! one draws on.
 
-use crate::money::Cents;
+use super::table::{self, Column};
+use crate::money::{Cents, usd};
 use crate::shares::Shares;
 use crate::summary::{DonationRow, LineRow};
 use ratatui::Frame;
@@ -15,19 +16,35 @@ pub(super) struct DonationsView {
     pub(super) selected: usize,
 }
 
-fn header() -> String {
-    format!(
-        "{:<10}  {:<6} {:>9} {:>12} {:>12} {:>12}  {}",
-        "Date", "Ticker", "Shares", "Value", "Basis", "Gain", "Claimed"
-    )
-}
+const COLUMNS: [Column; 7] = [
+    Column::left("Date"),
+    Column::left("Ticker"),
+    Column::right("Shares"),
+    Column::right("Value"),
+    Column::right("Basis"),
+    Column::right("Gain"),
+    Column::left("Claimed"),
+];
+
+const LINE_COLUMNS: [Column; 7] = [
+    Column::left("Bought"),
+    Column::right("Shares"),
+    Column::right("Price"),
+    Column::right("Basis"),
+    Column::right("Value"),
+    Column::right("Gain"),
+    Column::left("Term"),
+];
+
+/// The lines under the selected donation are indented by this much.
+const INDENT: &str = "  ";
 
 /// A plan's value and gain are marked `~`: they are at today's price.
 fn approx(plan: bool, c: Cents) -> String {
-    if plan { format!("~{c}") } else { c.to_string() }
+    if plan { format!("~{}", usd(c)) } else { usd(c) }
 }
 
-fn row_text(r: &DonationRow) -> String {
+fn row_cells(r: &DonationRow) -> Vec<String> {
     let plan = r.donation.is_plan();
     let claimed = if plan {
         "plan"
@@ -36,36 +53,31 @@ fn row_text(r: &DonationRow) -> String {
     } else {
         ""
     };
-    format!(
-        "{}  {:<6} {:>9} {:>12} {:>12} {:>12}  {claimed}",
-        r.donation.date,
-        r.donation.ticker,
+    vec![
+        r.donation.date.to_string(),
+        r.donation.ticker.clone(),
         r.donation.shares.to_string(),
         approx(plan, r.totals.value),
-        r.totals.basis.to_string(),
+        usd(r.totals.basis),
         approx(plan, r.totals.gain),
-    )
+        claimed.to_string(),
+    ]
 }
 
-fn line_header() -> String {
-    format!(
-        "  {:<10} {:>9} {:>8} {:>11} {:>11} {:>11}  {}",
-        "Bought", "Shares", "Price", "Basis", "Value", "Gain", "Term"
-    )
-}
-
-fn line_text(l: &LineRow, plan: bool) -> String {
-    format!(
-        "  {} {:>9} {:>8} {:>11} {:>11} {:>11}  {}{}",
-        l.lot.bought,
+fn line_cells(l: &LineRow, plan: bool) -> Vec<String> {
+    vec![
+        l.lot.bought.to_string(),
         l.line.shares.to_string(),
-        l.lot.price.to_string(),
-        l.line.basis.to_string(),
+        usd(l.lot.price),
+        usd(l.line.basis),
         approx(plan, l.line.value),
         approx(plan, l.line.gain),
-        if l.long_term { "LT" } else { "ST" },
-        if l.manual { " *" } else { "" },
-    )
+        format!(
+            "{}{}",
+            if l.long_term { "LT" } else { "ST" },
+            if l.manual { " *" } else { "" }
+        ),
+    ]
 }
 
 /// What a donation's lines need saying under them.
@@ -99,19 +111,22 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: 
     let height = usize::from(area.height);
     let table_room = rows.len().min((height.saturating_sub(1) / 3).max(3));
     let offset = selected.saturating_sub(table_room - 1);
-    let mut lines = vec![Line::styled(header(), bold)];
+    let width = usize::from(area.width);
+    let cells: Vec<Vec<String>> = rows.iter().map(row_cells).collect();
+    let mut table = table::lines(&COLUMNS.iter().collect::<Vec<_>>(), &cells, width).into_iter();
+    let mut lines = vec![Line::styled(table.next().unwrap_or_default(), bold)];
     lines.extend(
-        rows.iter()
+        table
             .enumerate()
             .skip(offset)
             .take(table_room)
-            .map(|(i, r)| {
+            .map(|(i, text)| {
                 let style = if i == selected {
                     Style::new().add_modifier(Modifier::REVERSED)
                 } else {
                     Style::new()
                 };
-                Line::styled(row_text(r), style)
+                Line::styled(text, style)
             }),
     );
     let r = &rows[selected];
@@ -120,7 +135,19 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: 
         format!("── {} {} ──", r.donation.date, r.donation.ticker),
         bold,
     ));
-    lines.push(Line::styled(line_header(), bold));
+    let line_cells: Vec<Vec<String>> = r
+        .lines
+        .iter()
+        .map(|l| line_cells(l, r.donation.is_plan()))
+        .collect();
+    let mut line_table = table::lines(
+        &LINE_COLUMNS.iter().collect::<Vec<_>>(),
+        &line_cells,
+        width.saturating_sub(INDENT.len()),
+    )
+    .into_iter()
+    .map(|text| format!("{INDENT}{text}"));
+    lines.push(Line::styled(line_table.next().unwrap_or_default(), bold));
     // Table, blank, title, and column header are above the lines; the notes below.
     let room = height
         .saturating_sub(1 + table_room + 3 + notes.len())
@@ -130,17 +157,17 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: 
     } else {
         r.lines.len()
     };
-    lines.extend(r.lines.iter().take(shown).map(|l| {
+    lines.extend(r.lines.iter().zip(line_table).take(shown).map(|(l, text)| {
         let style = if !l.long_term || l.losing {
             Style::new().fg(Color::Red)
         } else {
             Style::new()
         };
-        Line::styled(line_text(l, r.donation.is_plan()), style)
+        Line::styled(text, style)
     }));
     if shown < r.lines.len() {
         lines.push(Line::from(format!(
-            "  … {} more lots",
+            "{INDENT}… {} more lots",
             r.lines.len() - shown
         )));
     }
@@ -185,7 +212,7 @@ pub(super) mod tests {
 
     #[test]
     fn a_donation_shows_its_value_basis_and_gain_and_the_lots_it_draws_on() {
-        let text = screen(&mut app_with_donation(), 80, 20);
+        let text = screen(&mut app_with_donation(), 120, 20);
         let row = text.lines().find(|l| l.contains("2026-01-05")).unwrap();
         for cell in ["TDF45", "4.000", "180.00", "80.00", "100.00"] {
             assert!(row.contains(cell), "{cell} missing from {row:?}");
@@ -196,10 +223,19 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn a_wide_terminal_spreads_both_tables_to_its_right_edge() {
+        let text = screen(&mut app_with_donation(), 160, 20);
+        let header = text.lines().find(|l| l.contains("Date")).unwrap();
+        assert!(header.ends_with("Claimed│"), "{header}");
+        let line = text.lines().find(|l| l.contains("2020-01-10")).unwrap();
+        assert!(line.ends_with("LT *│"), "{line}");
+    }
+
+    #[test]
     fn with_no_donations_the_screen_says_how_to_plan_one() {
         let mut app = crate::tui::test_support::app();
         press(&mut app, KeyCode::Char('2'));
-        assert!(screen(&mut app, 80, 20).contains("n plans one"));
+        assert!(screen(&mut app, 120, 20).contains("n plans one"));
     }
 
     fn plan(app: &mut App, target: &str) {
@@ -209,13 +245,13 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_shortfall_plans_note_is_fully_visible_at_eighty_columns() {
+    fn a_shortfall_plans_note_is_fully_visible_at_a_hundred_and_twenty_columns() {
         let mut app = app_with_donation();
         press(&mut app, KeyCode::Char('n'));
         press(&mut app, KeyCode::Tab);
         type_text(&mut app, "25");
         press(&mut app, KeyCode::Enter);
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         let note = text.lines().find(|l| l.contains("Short ")).unwrap();
         assert!(note.contains("o picks by hand"), "{note}");
         assert!(note.ends_with('│'), "{note}");
@@ -225,7 +261,7 @@ pub(super) mod tests {
     fn plans_follow_recorded_donations_with_approximate_value_and_gain() {
         let mut app = app_with_donation();
         plan(&mut app, "100");
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         let rows: Vec<&str> = text
             .lines()
             .filter(|l| l.contains("TDF45") && l.contains("2026-"))
@@ -245,11 +281,11 @@ pub(super) mod tests {
     fn a_plans_lines_mark_their_value_and_gain_approximate() {
         let mut app = app_with_donation();
         plan(&mut app, "100");
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         let line = text.lines().find(|l| l.contains("2021-01-10")).unwrap();
         assert_eq!(line.matches('~').count(), 2, "{line}");
         press(&mut app, KeyCode::Up);
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         let line = text.lines().find(|l| l.contains("2020-01-10")).unwrap();
         assert!(!line.contains('~'), "{line}");
     }
@@ -275,7 +311,7 @@ pub(super) mod tests {
         .unwrap();
         let mut app = App::new(db, today()).unwrap();
         press(&mut app, KeyCode::Char('2'));
-        let buf = crate::tui::test_support::draw_buffer(80, 24, |f| app.render(f));
+        let buf = crate::tui::test_support::draw_buffer(120, 24, |f| app.render(f));
         let y = (0..buf.area.height)
             .find(|&y| {
                 let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
@@ -286,14 +322,14 @@ pub(super) mod tests {
             .map(|x| buf[(x, y)].fg)
             .collect::<Vec<_>>();
         assert!(fg.contains(&ratatui::style::Color::Red), "{fg:?}");
-        assert!(screen(&mut app, 80, 24).contains("Red: short-term"));
+        assert!(screen(&mut app, 120, 24).contains("Red: short-term"));
     }
 
     #[test]
     fn editing_a_donation_changes_its_value_and_gain() {
         let mut app = app_with_donation();
         press(&mut app, KeyCode::Char('e'));
-        assert!(screen(&mut app, 80, 24).contains("180.00"));
+        assert!(screen(&mut app, 120, 24).contains("180.00"));
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
         app.on_key(crate::tui::test_support::ctrl('u'));
@@ -318,7 +354,7 @@ pub(super) mod tests {
         app.on_key(crate::tui::test_support::ctrl('u'));
         type_text(&mut app, "12345");
         press(&mut app, KeyCode::Enter);
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         let row = text.lines().find(|l| l.contains("2026-01-05")).unwrap();
         assert!(row.contains("12,345.00"), "{row}");
         assert!(row.ends_with('│'), "{row}");
@@ -384,7 +420,7 @@ pub(super) mod tests {
         .unwrap();
         let mut app = App::new(db, today()).unwrap();
         press(&mut app, KeyCode::Char('2'));
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         assert!(text.contains("Date"), "{text}");
         assert!(text.contains("more lots"), "{text}");
         assert!(text.contains("* chosen by hand"), "{text}");
@@ -405,7 +441,7 @@ pub(super) mod tests {
         let mut app = App::new(db, today()).unwrap();
         press(&mut app, KeyCode::Char('2'));
         press(&mut app, KeyCode::End);
-        let text = screen(&mut app, 80, 24);
+        let text = screen(&mut app, 120, 24);
         assert!(text.contains("2026-01-25"), "{text}");
     }
 }

@@ -9,6 +9,7 @@ use crate::calc::term::is_long_term;
 use crate::db::{Db, Donation};
 use crate::donate;
 use crate::id::DonationId;
+use crate::money::usd;
 use crate::shares::Shares;
 use anyhow::{Context, Result, ensure};
 use ratatui::Frame;
@@ -186,7 +187,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
     };
     let title = format!(" Lots for the {what} of {} ", o.donation.date);
     let mut lines = vec![Line::from(format!(
-        "  {:<10} {:>9} {:>8}  {:<7} {}",
+        "  {:<10} {:>9} {:>10}  {:<7} {}",
         "Bought", "Free", "Price", "Term", "Take"
     ))];
     // Header, blank, and the total stay pinned; the border takes two more.
@@ -213,10 +214,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
                 };
                 Line::styled(
                     format!(
-                        "{marker} {} {:>9} {:>8}  {term:<7} {}",
+                        "{marker} {} {:>9} {:>10}  {term:<7} {}",
                         r.candidate.bought,
                         r.candidate.available.to_string(),
-                        r.candidate.price.to_string(),
+                        usd(r.candidate.price),
                         r.text.value()
                     ),
                     style,
@@ -396,8 +397,8 @@ mod tests {
         for _ in 0..o.rows.len() {
             o.on_key(key(KeyCode::Down), &db).unwrap();
         }
-        let area = Rect::new(0, 0, 80, 23);
-        let text = draw(80, 24, |f| render(f, area, &o));
+        let area = Rect::new(0, 0, 120, 23);
+        let text = draw(120, 24, |f| render(f, area, &o));
         assert!(text.contains("›"), "{text}");
         assert!(text.contains("Taking"), "{text}");
         assert!(text.contains("Bought"), "{text}");
@@ -445,19 +446,19 @@ mod tests {
         db.set_price("USM", today(), Cents(5_000)).unwrap();
         let id = crate::donate::save_plan(&db, "USM", Shares::whole(5), today()).unwrap();
         let o = OverrideForm::open(&db, id).unwrap();
-        let area = Rect::new(0, 0, 80, 23);
-        let buffer = draw_buffer(80, 24, |f| render(f, area, &o));
+        let area = Rect::new(0, 0, 120, 23);
+        let buffer = draw_buffer(120, 24, |f| render(f, area, &o));
         let text = buffer_text(&buffer);
         assert!(text.contains("ST loss"), "{text}");
         let y = (0..24)
             .find(|&y| {
-                (0..80)
+                (0..120)
                     .map(|x| buffer[(x, y)].symbol().to_string())
                     .collect::<String>()
                     .contains("ST loss")
             })
             .unwrap();
-        let x = (0..80).find(|&x| buffer[(x, y)].symbol() == "S").unwrap();
+        let x = (0..120).find(|&x| buffer[(x, y)].symbol() == "S").unwrap();
         assert_eq!(buffer[(x, y)].fg, Color::Red);
     }
 
@@ -467,8 +468,8 @@ mod tests {
         let id = plan(&db, 12);
         let mut o = OverrideForm::open(&db, id).unwrap();
         o.rows[0].text.set("11");
-        let area = Rect::new(0, 0, 80, 23);
-        let text = draw(80, 24, |f| render(f, area, &o));
+        let area = Rect::new(0, 0, 120, 23);
+        let text = draw(120, 24, |f| render(f, area, &o));
         assert!(text.contains("available"), "{text}");
         assert!(!text.contains("does not parse"), "{text}");
     }

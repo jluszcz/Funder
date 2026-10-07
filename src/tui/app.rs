@@ -10,6 +10,7 @@ use super::text::is_bare;
 use crate::db::{Db, DonationInput, NewLot};
 use crate::donate;
 use crate::id::{DonationId, LotId};
+use crate::shares::Shares;
 use crate::summary::{self, DonationRow, LotRow, Lots};
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
@@ -80,9 +81,7 @@ pub(super) struct App {
 
 impl App {
     pub(super) fn new(db: Db, today: NaiveDate) -> Result<App> {
-        let lots = summary::lots(&db, today)?;
-        let donations = summary::donations(&db)?;
-        Ok(App {
+        let mut app = App {
             db,
             today,
             screen: Screen::Lots,
@@ -93,9 +92,14 @@ impl App {
             status: None,
             status_set: false,
             quit: false,
-            lots,
-            donations,
-        })
+            lots: Lots {
+                rows: Vec::new(),
+                tickers: Vec::new(),
+            },
+            donations: Vec::new(),
+        };
+        app.reload()?;
+        Ok(app)
     }
 
     pub(super) fn should_quit(&self) -> bool {
@@ -155,7 +159,13 @@ impl App {
     }
 
     fn reload(&mut self) -> Result<()> {
+        let selected = self.selected_lot().map(|r| r.lot.id);
         self.lots = summary::lots(&self.db, self.today)?;
+        let every = self.lots.rows.len();
+        if !self.lots_view.show_all {
+            self.lots.rows.retain(|r| r.left > Shares::ZERO);
+        }
+        self.lots_view.hidden = every - self.lots.rows.len();
         self.donations = summary::donations(&self.db)?;
         self.donations_view.selected = self
             .donations_view
@@ -165,6 +175,11 @@ impl App {
             .lots_view
             .selected
             .min(self.lots.rows.len().saturating_sub(1));
+        // A lot hidden above the selected one would otherwise shift the
+        // selection onto its neighbour.
+        if let Some(id) = selected {
+            self.select_lot(id);
+        }
         Ok(())
     }
 
@@ -195,6 +210,13 @@ impl App {
             },
         }
         Ok(())
+    }
+
+    /// Selects the lot when it is shown; otherwise the selection stays put.
+    fn select_lot(&mut self, id: LotId) {
+        if let Some(i) = self.lots.rows.iter().position(|r| r.lot.id == id) {
+            self.lots_view.selected = i;
+        }
     }
 
     fn selected_lot(&self) -> Option<&LotRow> {
@@ -248,6 +270,10 @@ impl App {
                     self.modal = Some(Modal::DeleteLot(id));
                     self.info(format!("Delete the lot bought {bought}? y to confirm"));
                 }
+            }
+            KeyCode::Char('s') => {
+                self.lots_view.show_all = !self.lots_view.show_all;
+                self.reload()?;
             }
             KeyCode::Char('p') => {
                 if let Some(r) = self.selected_lot() {
@@ -519,9 +545,7 @@ impl App {
             }
         };
         self.reload()?;
-        if let Some(i) = self.lots.rows.iter().position(|r| r.lot.id == id) {
-            self.lots_view.selected = i;
-        }
+        self.select_lot(id);
         self.info(format!("Saved the lot bought {}", lot.bought));
         Ok(())
     }
@@ -635,9 +659,103 @@ mod tests {
     use super::*;
     use crate::calc::select::Pick;
     use crate::db::DonationInput;
-    use crate::shares::Shares;
     use crate::tui::donations::tests::app_with_donation;
     use crate::tui::test_support::{app, ctrl, day, press, screen, today, type_text};
+
+    /// The fixture with all ten shares of the 2020 TDF45 lot donated.
+    fn app_with_a_lot_used_up() -> App {
+        let db = crate::tui::test_support::fixture_db();
+        let lot = db.lots().unwrap()[0].id;
+        db.write_donation(
+            None,
+            &DonationInput {
+                ticker: "TDF45".into(),
+                date: day(2026, 1, 5),
+                shares: Shares::whole(10),
+                value: Some(crate::money::Cents(45_000)),
+            },
+            &[Pick {
+                lot,
+                shares: Shares::whole(10),
+                manual: true,
+            }],
+        )
+        .unwrap();
+        App::new(db, today()).unwrap()
+    }
+
+    #[test]
+    fn a_lot_with_nothing_left_is_hidden_and_the_screen_says_so() {
+        let mut app = app_with_a_lot_used_up();
+        let text = screen(&mut app, 120, 20);
+        assert!(!text.contains("2020-01-10"), "{text}");
+        assert!(
+            text.contains("1 lot with nothing left is hidden: s shows it"),
+            "{text}"
+        );
+        let ticker = text.lines().find(|l| l.contains("TDF45 @")).unwrap();
+        assert!(ticker.contains("10.000 left"), "{ticker}");
+    }
+
+    #[test]
+    fn s_shows_every_lot_and_hides_the_used_up_ones_again() {
+        let mut app = app_with_a_lot_used_up();
+        press(&mut app, KeyCode::Char('s'));
+        let text = screen(&mut app, 120, 20);
+        assert!(text.contains("2020-01-10"), "{text}");
+        assert!(!text.contains("hidden"), "{text}");
+        press(&mut app, KeyCode::Char('s'));
+        assert!(!screen(&mut app, 120, 20).contains("2020-01-10"));
+    }
+
+    #[test]
+    fn showing_every_lot_keeps_the_selected_lot_selected() {
+        let mut app = app_with_a_lot_used_up();
+        press(&mut app, KeyCode::Down);
+        let id = app.selected_lot().unwrap().lot.id;
+        press(&mut app, KeyCode::Char('s'));
+        assert_eq!(app.selected_lot().unwrap().lot.id, id);
+    }
+
+    #[test]
+    fn hiding_a_lot_above_the_selected_one_keeps_the_selection_on_its_lot() {
+        let mut app = app_with_a_lot_used_up();
+        press(&mut app, KeyCode::Char('s'));
+        press(&mut app, KeyCode::End);
+        let id = app.selected_lot().unwrap().lot.id;
+        press(&mut app, KeyCode::Char('s'));
+        assert_eq!(app.selected_lot().unwrap().lot.id, id);
+    }
+
+    #[test]
+    fn with_every_lot_used_up_the_ticker_lines_stay_under_the_note() {
+        let db = crate::tui::test_support::fixture_db();
+        for (i, lot) in db.lots().unwrap().into_iter().enumerate() {
+            db.write_donation(
+                None,
+                &DonationInput {
+                    ticker: lot.ticker.clone(),
+                    date: day(2026, 5, 1 + u32::try_from(i).unwrap()),
+                    shares: lot.shares,
+                    value: Some(crate::money::Cents(10_000)),
+                },
+                &[Pick {
+                    lot: lot.id,
+                    shares: lot.shares,
+                    manual: true,
+                }],
+            )
+            .unwrap();
+        }
+        let mut app = App::new(db, today()).unwrap();
+        let text = screen(&mut app, 120, 20);
+        assert!(
+            text.contains("3 lots with nothing left are hidden"),
+            "{text}"
+        );
+        assert!(text.contains("TDF45 @ $50.00"), "{text}");
+        assert!(!text.contains("Bought"), "{text}");
+    }
 
     #[test]
     fn adding_a_lot_through_the_form_saves_it() {
@@ -794,7 +912,7 @@ mod tests {
     fn the_help_panel_opens_on_question_mark_and_closes_on_escape() {
         let mut app = app();
         press(&mut app, KeyCode::Char('?'));
-        assert!(screen(&mut app, 80, 24).contains("Set today's price"));
+        assert!(screen(&mut app, 120, 24).contains("Set today's price"));
         press(&mut app, KeyCode::Esc);
         assert!(!app.help);
     }
@@ -810,7 +928,7 @@ mod tests {
 
     #[test]
     fn the_footer_names_the_screens_keys() {
-        let text = screen(&mut app(), 80, 20);
+        let text = screen(&mut app(), 120, 20);
         assert!(text.lines().last().unwrap().contains("p price"), "{text}");
     }
 

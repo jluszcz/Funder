@@ -7,6 +7,7 @@ mod help;
 mod lots;
 mod override_form;
 mod plan_form;
+mod table;
 mod text;
 
 #[cfg(test)]

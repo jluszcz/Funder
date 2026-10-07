@@ -101,23 +101,24 @@ allocation whose lot is no longer long-term or no longer gains. `manual` allocat
 
 Conventions are Paychecker's: `1`/`2` switch screens; `a`/`e`/`d` add, edit, delete; `d` asks for
 `y`; `?`/F1 opens help; `q` quits; `Esc` backs out of the innermost thing; `Ctrl`+letter is always
-text editing; footers are joined from the help tables. Laid out for an 80-column terminal;
+text editing; footers are joined from the help tables. Laid out for a 120-column terminal;
 columns compress before anything wraps.
 
 ### 1 — Lots
 
-A table of every lot: Bought, Ticker, Shares, Left, Price, and — for the undonated `Left` — Basis,
+A table of the lots with shares left (every lot after `s`): Bought, Ticker, Shares, Left, Price, and — for the undonated `Left` — Basis,
 Value, Gain, and Term (LT/ST as of today), the money columns in whole dollars. A line per ticker
 under the table shows its current price and that price's date, and totals the undonated shares,
-basis and gain. Columns are as wide as their widest figure; when the table still will not fit, the
-lot's whole Shares gives way, and the ticker line drops the date and then the shares rather than
-cut a figure.
+basis and gain. Columns are as wide as their widest figure, and spread to fill the terminal; when the table still
+will not fit, the lot's whole Shares gives way, and the ticker line drops the date and then the shares rather than
+cut a figure. A line under the ticker lines counts the lots hidden for having nothing left.
 
 | Key | Action |
 |---|---|
 | `a` | Add a lot (date, ticker, shares, price). |
 | `e` | Edit the selected lot, within invariant 4. |
 | `d` | Delete the selected lot; refused, naming the donations, if it has allocations. |
+| `s` | Show every lot, or hide again those with nothing left. |
 | `p` | Set today's price for the selected lot's ticker. |
 
 ### 2 — Donations
