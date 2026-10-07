@@ -10,6 +10,8 @@ on:
       - 'Cargo**'
       - 'src/**/*.rs'
       - 'tests/**/*.rs'
+      - '**/*.tf'
+      - '.terraform.lock.hcl'
 
   pull_request:
     branches:
@@ -27,3 +29,6 @@ jobs:
     uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
     with:
       all-features: true
+
+  terraform:
+    uses: jluszcz/github-utils/.github/workflows/terraform-ci.yml@v2
