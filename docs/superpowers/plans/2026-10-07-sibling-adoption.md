@@ -14,7 +14,7 @@
 
 - Each repository's own `AGENTS.md` binds work in it. Read it before the first task in that repository.
 - **No real data in either repository.** No real figure, institution, account code, ticker the owner holds, or personal path — in source, tests, docs, commits, or PR text.
-- Never commit to `main`. Part A works on branch `adopt-finance-utils` in `/Users/jacob/Documents/Programs/Paychecker`; Part B on branch `adopt-finance-utils` in `/Users/jacob/Documents/Programs/MisterManager`. One commit per task; one PR per part at the end. Commit with the `jluszcz:commit` skill (no `Co-Authored-By` trailer).
+- Never commit to `main`. Part A works on branch `adopt-finance-utils` in the Paychecker checkout; Part B on branch `adopt-finance-utils` in the MisterManager checkout. Both sit beside this repository, as `../Paychecker` and `../MisterManager`. One commit per task; one PR per part at the end. Commit with the `jluszcz:commit` skill (no `Co-Authored-By` trailer).
 - **Behavior is unchanged.** Footer text, key handling, the `--help` text of every flag, and every CLI path decision stay as they are. Any existing test that has to change is a signal to stop and check, except where a task says which test moves and why.
 - Paychecker checks before every commit: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 - MisterManager checks before every commit: `cargo fmt`, `cargo clippy --all-targets -- -D warnings`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test`, `cargo test --all-features`. Its workbook-oracle tests skip without `MM_WORKBOOK`; nothing in this plan touches the importer, so the skip is fine.
@@ -44,7 +44,7 @@
 - [ ] **Step 1: Branch and update the dependency**
 
 ```bash
-cd /Users/jacob/Documents/Programs/Paychecker && git switch main && git pull --ff-only
+cd ../Paychecker && git switch main && git pull --ff-only
 git switch -c adopt-finance-utils
 cargo update -p jluszcz_finance_utils
 ```
@@ -210,7 +210,7 @@ It passes on today's code.
 - [ ] **Step 1: Branch and update the dependency**
 
 ```bash
-cd /Users/jacob/Documents/Programs/MisterManager && git switch main && git pull --ff-only
+cd ../MisterManager && git switch main && git pull --ff-only
 git switch -c adopt-finance-utils
 cargo update -p jluszcz_finance_utils
 ```
