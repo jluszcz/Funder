@@ -89,32 +89,59 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: 
         return;
     }
     let bold = Style::new().add_modifier(Modifier::BOLD);
+    let selected = view.selected.min(rows.len() - 1);
+    let notes = notes(&rows[selected]);
+    // The table takes a third of the height at most, so the selected
+    // donation's lines and notes keep the rest.
+    let height = usize::from(area.height);
+    let table_room = rows.len().min((height.saturating_sub(1) / 3).max(3));
+    let offset = selected.saturating_sub(table_room - 1);
     let mut lines = vec![Line::styled(header(), bold)];
-    lines.extend(rows.iter().enumerate().map(|(i, r)| {
-        let style = if i == view.selected {
-            Style::new().add_modifier(Modifier::REVERSED)
+    lines.extend(
+        rows.iter()
+            .enumerate()
+            .skip(offset)
+            .take(table_room)
+            .map(|(i, r)| {
+                let style = if i == selected {
+                    Style::new().add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::new()
+                };
+                Line::styled(row_text(r), style)
+            }),
+    );
+    let r = &rows[selected];
+    lines.push(Line::default());
+    lines.push(Line::styled(
+        format!("── {} {} ──", r.donation.date, r.donation.ticker),
+        bold,
+    ));
+    lines.push(Line::styled(line_header(), bold));
+    // Table, blank, title, and column header are above the lines; the notes below.
+    let room = height
+        .saturating_sub(1 + table_room + 3 + notes.len())
+        .max(1);
+    let shown = if r.lines.len() > room {
+        room - 1
+    } else {
+        r.lines.len()
+    };
+    lines.extend(r.lines.iter().take(shown).map(|l| {
+        let style = if !l.long_term || l.losing {
+            Style::new().fg(Color::Red)
         } else {
             Style::new()
         };
-        Line::styled(row_text(r), style)
+        Line::styled(line_text(l), style)
     }));
-    if let Some(r) = rows.get(view.selected) {
-        lines.push(Line::default());
-        lines.push(Line::styled(
-            format!("── {} {} ──", r.donation.date, r.donation.ticker),
-            bold,
-        ));
-        lines.push(Line::styled(line_header(), bold));
-        lines.extend(r.lines.iter().map(|l| {
-            let style = if !l.long_term || l.losing {
-                Style::new().fg(Color::Red)
-            } else {
-                Style::new()
-            };
-            Line::styled(line_text(l), style)
-        }));
-        lines.extend(notes(r).into_iter().map(Line::from));
+    if shown < r.lines.len() {
+        lines.push(Line::from(format!(
+            "  … {} more lots",
+            r.lines.len() - shown
+        )));
     }
+    lines.extend(notes.into_iter().map(Line::from));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -279,5 +306,90 @@ pub(super) mod tests {
         let row = text.lines().find(|l| l.contains("2026-01-05")).unwrap();
         assert!(row.contains("12,345.00"), "{row}");
         assert!(row.ends_with('│'), "{row}");
+    }
+
+    /// TDF45 lots of one share each, bought every five days from 2022-01-01.
+    fn db_with_small_lots(count: u32) -> crate::db::Db {
+        let db = fixture_db();
+        for n in 0..count {
+            db.insert_lot(&crate::db::NewLot {
+                ticker: "TDF45".into(),
+                bought: day(2022, 1, 1) + chrono::Days::new(u64::from(n) * 5),
+                shares: Shares::whole(1),
+                price: Cents(1_000),
+            })
+            .unwrap();
+        }
+        db
+    }
+
+    fn donate_one(db: &crate::db::Db, date: chrono::NaiveDate, lot: crate::id::LotId) {
+        db.write_donation(
+            None,
+            &DonationInput {
+                ticker: "TDF45".into(),
+                date,
+                shares: Shares::whole(1),
+                value: Some(Cents(5_000)),
+            },
+            &[Pick {
+                lot,
+                shares: Shares::whole(1),
+                manual: true,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_donation_on_twenty_lots_says_how_many_lines_do_not_fit_and_keeps_its_notes() {
+        let db = db_with_small_lots(20);
+        let picks: Vec<Pick> = db
+            .lots()
+            .unwrap()
+            .iter()
+            .filter(|l| l.shares == Shares::whole(1))
+            .map(|l| Pick {
+                lot: l.id,
+                shares: Shares::whole(1),
+                manual: true,
+            })
+            .collect();
+        db.write_donation(
+            None,
+            &DonationInput {
+                ticker: "TDF45".into(),
+                date: day(2026, 1, 5),
+                shares: Shares::whole(20),
+                value: Some(Cents(100_000)),
+            },
+            &picks,
+        )
+        .unwrap();
+        let mut app = App::new(db, today()).unwrap();
+        press(&mut app, KeyCode::Char('2'));
+        let text = screen(&mut app, 80, 24);
+        assert!(text.contains("Date"), "{text}");
+        assert!(text.contains("more lots"), "{text}");
+        assert!(text.contains("* chosen by hand"), "{text}");
+    }
+
+    #[test]
+    fn with_many_donations_the_selected_one_stays_on_screen() {
+        let db = db_with_small_lots(25);
+        let lots: Vec<_> = db
+            .lots()
+            .unwrap()
+            .into_iter()
+            .filter(|l| l.shares == Shares::whole(1))
+            .collect();
+        for (n, lot) in lots.iter().enumerate() {
+            donate_one(&db, day(2026, 1, 1) + chrono::Days::new(n as u64), lot.id);
+        }
+        let mut app = App::new(db, today()).unwrap();
+        press(&mut app, KeyCode::Char('2'));
+        press(&mut app, KeyCode::End);
+        let text = screen(&mut app, 80, 24);
+        assert!(text.contains("2026-01-25"), "{text}");
     }
 }
