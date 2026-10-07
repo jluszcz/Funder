@@ -72,7 +72,13 @@ pub(super) const FORM: &[Entry] = &[
 
 pub(super) const OVERRIDE: &[Entry] = &[
     Entry::hidden("↑/↓", "Select a lot"),
-    Entry::hidden("0-9 .", "Type the shares to take from the selected lot"),
+    Entry::hidden("Home/End", "Select the first or last lot"),
+    Entry::hidden(
+        "0-9 .",
+        "Type the shares for the selected lot; the first replaces them",
+    ),
+    Entry::hidden("Backspace", "Edit the shares instead of replacing them"),
+    Entry::hidden("Ctrl+U", "Clear to the start of the shares"),
     Entry::own(
         "A",
         "auto",
@@ -118,6 +124,13 @@ mod tests {
         for table in ALL {
             let line = footer(&[table, GLOBAL]);
             assert!(line.chars().count() <= 80, "{line}");
+        }
+    }
+
+    #[test]
+    fn the_override_explains_its_editing_and_selection_keys() {
+        for key in ["Backspace", "Ctrl+U", "Home/End"] {
+            assert!(OVERRIDE.iter().any(|e| e.key == key), "{key} missing");
         }
     }
 

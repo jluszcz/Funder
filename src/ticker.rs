@@ -25,7 +25,7 @@ mod tests {
     #[test]
     fn a_ticker_is_trimmed_and_upper_cased() {
         assert_eq!(normalize(" tdf45 ").unwrap(), "TDF45");
-        assert_eq!(normalize("brk.b").unwrap(), "BRK.B");
+        assert_eq!(normalize("tdf.b").unwrap(), "TDF.B");
     }
 
     #[test]

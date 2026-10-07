@@ -89,12 +89,13 @@ impl PlanForm {
             Err(e) => vec![e.clone()],
             Ok(plan) => {
                 let t = &plan.totals;
+                let lots = match plan.selection.picks.len() {
+                    1 => "1 lot".to_string(),
+                    n => format!("{n} lots"),
+                };
                 let mut notes = vec![format!(
-                    "{} lots · basis {} · value ~{} · gain ~{}",
-                    plan.selection.picks.len(),
-                    t.basis,
-                    t.value,
-                    t.gain
+                    "{lots} · basis {} · value ~{} · gain ~{}",
+                    t.basis, t.value, t.gain
                 )];
                 if plan.selection.shortfall > Shares::ZERO {
                     notes.push(format!(
@@ -132,6 +133,15 @@ mod tests {
         let notes = p.notes().join("\n");
         assert!(notes.contains("2 lots"), "{notes}");
         assert!(notes.contains("gain ~"), "{notes}");
+    }
+
+    #[test]
+    fn a_plan_on_one_lot_says_lot() {
+        let db = fixture_db();
+        let mut p = PlanForm::new(&db, "TDF45", today());
+        type_into(&mut p, &db, "100");
+        let notes = p.notes().join("\n");
+        assert!(notes.starts_with("1 lot ·"), "{notes}");
     }
 
     #[test]

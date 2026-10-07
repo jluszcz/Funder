@@ -5,7 +5,7 @@
 use crate::calc::gain::{self, Part, Totals, Valuation};
 use crate::calc::select::{self, Pick, Selection};
 use crate::db::{Db, DonationInput};
-use crate::id::DonationId;
+use crate::id::{DonationId, LotId};
 use crate::money::Cents;
 use crate::shares::Shares;
 use anyhow::{Context, Result, ensure};
@@ -83,34 +83,56 @@ pub fn save_plan(db: &Db, ticker: &str, shares: Shares, today: NaiveDate) -> Res
     db.write_donation(None, &input, &plan.selection.picks)
 }
 
-/// Record a plan, or re-record a donation, as given: the selection re-runs at
-/// the recorded value, keeping manual picks. A shortfall is refused rather
-/// than recorded short.
+/// Record a plan, or re-record a donation, as given, and say whether the
+/// lots it draws on changed. A recorded donation whose shares are unchanged
+/// keeps every lot it had, unless one cannot stand at the new date; otherwise
+/// the selection re-runs at the recorded value, keeping manual picks. A
+/// shortfall is refused rather than recorded short.
 pub fn record(
     db: &Db,
     id: DonationId,
     date: NaiveDate,
     shares: Shares,
     value: Cents,
-) -> Result<()> {
+) -> Result<bool> {
     let donation = db.donation(id)?;
+    let before = db.allocations(id)?;
+    let input = DonationInput {
+        ticker: donation.ticker.clone(),
+        date,
+        shares,
+        value: Some(value),
+    };
+    if !donation.is_plan() && shares == donation.shares {
+        let kept: Vec<Pick> = before
+            .iter()
+            .map(|a| Pick {
+                lot: a.lot,
+                shares: a.shares,
+                manual: a.manual,
+            })
+            .collect();
+        // A refusal (a kept lot bought after the new date) writes nothing,
+        // and the re-run below decides instead.
+        if db.write_donation(Some(id), &input, &kept).is_ok() {
+            return Ok(false);
+        }
+    }
     let valuation = Valuation::Recorded { value, shares };
     let candidates = db.candidates(&donation.ticker, Some(id))?;
     let manual = manual_picks(db, id)?;
     let selection = select::with_manual(&candidates, &manual, shares, valuation, date);
     ensure!(
         selection.shortfall == Shares::ZERO,
-        "{} shares short: no other long-term lot gains at that value. o picks lots by hand",
+        "{} shares short: no long-term lot that gains is free. o picks by hand",
         selection.shortfall
     );
-    let input = DonationInput {
-        ticker: donation.ticker,
-        date,
-        shares,
-        value: Some(value),
-    };
     db.write_donation(Some(id), &input, &selection.picks)?;
-    Ok(())
+    let mut was: Vec<(LotId, Shares)> = before.iter().map(|a| (a.lot, a.shares)).collect();
+    let mut now: Vec<(LotId, Shares)> = selection.picks.iter().map(|p| (p.lot, p.shares)).collect();
+    was.sort();
+    now.sort();
+    Ok(was != now)
 }
 
 /// What the selection would choose for `id` with no manual picks, at its
@@ -137,7 +159,6 @@ pub fn automatic(db: &Db, id: DonationId) -> Result<Selection> {
 mod tests {
     use super::*;
     use crate::db::{NewLot, open_in_memory};
-    use crate::id::LotId;
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -269,6 +290,83 @@ mod tests {
         let err = record(&db, id, day(2026, 2, 1), Shares::whole(2), Cents(10_000)).unwrap_err();
         assert!(err.to_string().contains("bought after"), "{err}");
         assert!(db.donation(id).unwrap().is_plan());
+    }
+
+    /// The fixture with 5 shares recorded today from the 2021 lot, then a
+    /// cheaper lot bought in 2019 that a fresh selection would prefer.
+    fn recorded_then_cheaper_lot() -> (Db, DonationId, [LotId; 4]) {
+        let (db, [a, b, c]) = fixture();
+        let id = save_plan(&db, "TDF45", Shares::whole(5), today()).unwrap();
+        record(&db, id, today(), Shares::whole(5), Cents(5 * 5_000)).unwrap();
+        let cheaper = db
+            .insert_lot(&NewLot {
+                ticker: "TDF45".into(),
+                bought: day(2019, 1, 10),
+                shares: Shares::whole(10),
+                price: Cents(500),
+            })
+            .unwrap();
+        (db, id, [a, b, c, cheaper])
+    }
+
+    fn lots_of(db: &Db, id: DonationId) -> Vec<(LotId, Shares)> {
+        db.allocations(id)
+            .unwrap()
+            .iter()
+            .map(|x| (x.lot, x.shares))
+            .collect()
+    }
+
+    #[test]
+    fn editing_a_recorded_donations_value_with_its_shares_unchanged_keeps_its_lots() {
+        let (db, id, [_, b, _, _]) = recorded_then_cheaper_lot();
+        record(&db, id, today(), Shares::whole(5), Cents(5 * 6_000)).unwrap();
+        assert_eq!(lots_of(&db, id), [(b, Shares::whole(5))]);
+        assert_eq!(db.donation(id).unwrap().value, Some(Cents(5 * 6_000)));
+    }
+
+    #[test]
+    fn an_unchanged_edit_keeping_its_lots_reports_no_change() {
+        let (db, id, _) = recorded_then_cheaper_lot();
+        let changed = record(&db, id, today(), Shares::whole(5), Cents(5 * 6_000)).unwrap();
+        assert!(!changed);
+    }
+
+    #[test]
+    fn editing_a_recorded_donations_shares_reruns_the_selection_and_says_so() {
+        let (db, id, [_, _, _, cheaper]) = recorded_then_cheaper_lot();
+        let changed = record(&db, id, today(), Shares::whole(6), Cents(6 * 5_000)).unwrap();
+        assert!(changed);
+        assert_eq!(lots_of(&db, id), [(cheaper, Shares::whole(6))]);
+    }
+
+    #[test]
+    fn an_unchanged_edit_to_a_date_before_its_lot_was_bought_reruns_the_selection() {
+        let (db, id, [_, _, _, cheaper]) = recorded_then_cheaper_lot();
+        let changed = record(&db, id, day(2021, 1, 5), Shares::whole(5), Cents(5 * 5_000)).unwrap();
+        assert!(changed);
+        assert_eq!(lots_of(&db, id), [(cheaper, Shares::whole(5))]);
+    }
+
+    #[test]
+    fn recording_a_plan_whose_best_lots_changed_says_so() {
+        let (db, [..]) = fixture();
+        let id = save_plan(&db, "TDF45", Shares::whole(5), today()).unwrap();
+        db.insert_lot(&NewLot {
+            ticker: "TDF45".into(),
+            bought: day(2019, 1, 10),
+            shares: Shares::whole(10),
+            price: Cents(500),
+        })
+        .unwrap();
+        assert!(record(&db, id, today(), Shares::whole(5), Cents(5 * 5_000)).unwrap());
+    }
+
+    #[test]
+    fn recording_a_plan_on_the_lots_it_reserved_says_nothing_changed() {
+        let (db, _) = fixture();
+        let id = save_plan(&db, "TDF45", Shares::whole(5), today()).unwrap();
+        assert!(!record(&db, id, today(), Shares::whole(5), Cents(5 * 5_000)).unwrap());
     }
 
     #[test]

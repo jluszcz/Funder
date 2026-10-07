@@ -88,8 +88,10 @@ valued at the current price; with no price on record, value and gain are `—`.
 4. If eligible lots run out first, return the partial selection and the shortfall. It never
    reaches for a short-term or losing lot on its own.
 
-Re-running the selection (recording a plan, or editing a donation) keeps every `manual` allocation
-as-is, subtracts it from `S`, and selects the remainder from the other eligible lots.
+Re-running the selection (recording a plan, or editing a donation's shares) keeps every `manual`
+allocation as-is, subtracts it from `S`, and selects the remainder from the other eligible lots.
+Editing a recorded donation with its shares unchanged keeps every allocation it has, and re-runs
+only if one cannot stand at the new date. Either way, the status line says when the lots changed.
 
 **Planning** — given a target dollar amount `T` and current price `P`, the proposed share count is
 `floor(T / P)` whole shares; the owner may change it before saving.
@@ -106,7 +108,9 @@ columns compress before anything wraps.
 A table of every lot: Bought, Ticker, Shares, Left, Price, and — for the undonated `Left` — Basis,
 Value, Gain, and Term (LT/ST as of today), the money columns in whole dollars. A line per ticker
 under the table shows its current price and that price's date, and totals the undonated shares,
-basis and gain.
+basis and gain. Columns are as wide as their widest figure; when the table still will not fit, the
+lot's whole Shares gives way, and the ticker line drops the date and then the shares rather than
+cut a figure.
 
 | Key | Action |
 |---|---|
@@ -125,7 +129,7 @@ gain, term; short-term and losing allocations are flagged.
 |---|---|
 | `n` | New plan: ticker, target dollars → proposed shares (editable). The selection and gain are shown live, with any shortfall. `Enter` saves the plan. |
 | `r` | Record the selected plan: actual date (default today), shares, total value. Re-runs the selection keeping `manual` rows. Refused while a shortfall remains. |
-| `e` | Edit a recorded donation with the same form as `r`. |
+| `e` | Edit a recorded donation with the same form as `r`. Its lots are kept unless its shares change. |
 | `o` | Override: a modal listing every lot of the ticker with shares available. The owner types a share count per lot; rows typed into become `manual`. A running "allocated / required" total; `Enter` saves only when they match (or, for a plan, when not over). `A` discards the manual rows and restores the automatic selection. |
 | `c` | Toggle claimed (recorded donations only). |
 | `d` | Delete the selected plan or donation, freeing its shares. |

@@ -30,6 +30,9 @@ pub(super) struct OverrideForm {
     pub(super) donation: Donation,
     pub(super) rows: Vec<Row>,
     pub(super) selected: usize,
+    /// Whether the selected row is as it was when the selection reached it:
+    /// a character typed then replaces its shares instead of appending.
+    fresh: bool,
 }
 
 impl OverrideForm {
@@ -74,6 +77,7 @@ impl OverrideForm {
             donation,
             rows,
             selected: 0,
+            fresh: true,
         })
     }
 
@@ -81,26 +85,39 @@ impl OverrideForm {
         match key.code {
             KeyCode::Esc => return Ok(Outcome::Cancel),
             KeyCode::Enter => return Ok(Outcome::Submit),
-            KeyCode::Up => self.selected = self.selected.saturating_sub(1),
-            KeyCode::Down => {
-                self.selected = (self.selected + 1).min(self.rows.len().saturating_sub(1))
+            KeyCode::Up => self.select(self.selected.saturating_sub(1)),
+            KeyCode::Down => self.select(self.selected + 1),
+            KeyCode::Home => self.select(0),
+            KeyCode::End => self.select(self.rows.len()),
+            KeyCode::Char('A') if is_bare(key) => {
+                self.automatic(db)?;
+                self.fresh = true;
             }
-            KeyCode::Char('A') if is_bare(key) => self.automatic(db)?,
             _ => {
                 if let Some(row) = self.rows.get_mut(self.selected) {
                     match key.code {
                         KeyCode::Left if is_bare(key) => row.text.step(-1),
                         KeyCode::Right if is_bare(key) => row.text.step(1),
                         _ => {
+                            if self.fresh && matches!(key.code, KeyCode::Char(_)) && is_bare(key) {
+                                row.text.clear();
+                            }
                             if edit_key(&mut row.text, key) == Edit::Changed {
                                 row.manual = true;
                             }
                         }
                     }
+                    self.fresh = false;
                 }
             }
         }
         Ok(Outcome::Continue)
+    }
+
+    /// Select row `i`, or the last row past the end.
+    fn select(&mut self, i: usize) {
+        self.selected = i.min(self.rows.len().saturating_sub(1));
+        self.fresh = true;
     }
 
     fn automatic(&mut self, db: &Db) -> Result<()> {
@@ -269,6 +286,48 @@ mod tests {
                 .iter()
                 .any(|p| p.shares == Shares::whole(10) && !p.manual)
         );
+    }
+
+    #[test]
+    fn the_first_digit_typed_on_a_row_replaces_its_shares() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        o.on_key(key(KeyCode::Down), &db).unwrap();
+        type_into(&mut o, &db, "5");
+        assert_eq!(o.rows[1].text.value(), "5");
+        type_into(&mut o, &db, "1");
+        assert_eq!(o.rows[1].text.value(), "51");
+    }
+
+    #[test]
+    fn the_first_digit_typed_after_opening_replaces_the_first_rows_shares() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        type_into(&mut o, &db, "7");
+        assert_eq!(o.rows[0].text.value(), "7");
+    }
+
+    #[test]
+    fn backspace_on_a_fresh_row_edits_its_shares_rather_than_replacing_them() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        o.on_key(key(KeyCode::Backspace), &db).unwrap();
+        type_into(&mut o, &db, "5");
+        assert_eq!(o.rows[0].text.value(), "10.005");
+    }
+
+    #[test]
+    fn home_and_end_select_the_first_and_last_lots() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        o.on_key(key(KeyCode::End), &db).unwrap();
+        assert_eq!(o.selected, 1);
+        o.on_key(key(KeyCode::Home), &db).unwrap();
+        assert_eq!(o.selected, 0);
     }
 
     #[test]

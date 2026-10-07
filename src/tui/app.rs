@@ -428,16 +428,28 @@ impl App {
                 Outcome::Continue => self.modal = Some(Modal::Record { form, donation }),
                 Outcome::Cancel => {}
                 Outcome::Submit => {
-                    let saved = (|| -> Result<NaiveDate> {
+                    let saved = (|| -> Result<String> {
                         let date = form.date(0)?;
-                        donate::record(&self.db, donation, date, form.shares(1)?, form.cents(2)?)?;
-                        Ok(date)
+                        let was_plan = self.db.donation(donation)?.is_plan();
+                        let changed = donate::record(
+                            &self.db,
+                            donation,
+                            date,
+                            form.shares(1)?,
+                            form.cents(2)?,
+                        )?;
+                        let note = match (changed, was_plan) {
+                            (false, _) => "",
+                            (true, true) => " — lots changed from the plan",
+                            (true, false) => " — lots changed",
+                        };
+                        Ok(format!("Recorded the donation of {date}{note}"))
                     })();
                     match saved {
-                        Ok(date) => {
+                        Ok(message) => {
                             self.reload()?;
                             self.select_donation(donation);
-                            self.info(format!("Recorded the donation of {date}"));
+                            self.info(message);
                         }
                         Err(e) => {
                             self.modal = Some(Modal::Record { form, donation });
@@ -860,6 +872,72 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.modal, Some(Modal::Record { .. })));
         assert!(app.status.as_ref().unwrap().text.contains("shares short"));
+    }
+
+    fn add_cheaper_lot(app: &mut App) {
+        app.db
+            .insert_lot(&NewLot {
+                ticker: "TDF45".into(),
+                bought: day(2019, 1, 10),
+                shares: Shares::whole(10),
+                price: crate::money::Cents(500),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn recording_a_plan_whose_best_lots_changed_says_so() {
+        let mut app = on_donations(app());
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "100");
+        press(&mut app, KeyCode::Enter);
+        add_cheaper_lot(&mut app);
+        press(&mut app, KeyCode::Char('r'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "100");
+        press(&mut app, KeyCode::Enter);
+        let text = &app.status.as_ref().unwrap().text;
+        assert_eq!(
+            text,
+            "Recorded the donation of 2026-06-01 — lots changed from the plan"
+        );
+    }
+
+    #[test]
+    fn editing_a_donations_value_keeps_its_lots_and_says_nothing_changed() {
+        let mut app = app_with_donation();
+        add_cheaper_lot(&mut app);
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        app.on_key(ctrl('u'));
+        type_text(&mut app, "200");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Recorded the donation of 2026-01-05"
+        );
+        let lines = &app.donations[app.donations_view.selected].lines;
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].lot.bought, day(2020, 1, 10));
+    }
+
+    #[test]
+    fn editing_a_donations_shares_says_when_its_lots_changed() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Tab);
+        app.on_key(ctrl('u'));
+        type_text(&mut app, "5");
+        press(&mut app, KeyCode::Tab);
+        app.on_key(ctrl('u'));
+        type_text(&mut app, "225");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Recorded the donation of 2026-01-05 — lots changed"
+        );
     }
 
     #[test]

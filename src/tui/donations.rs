@@ -23,9 +23,12 @@ fn header() -> String {
 }
 
 /// A plan's value and gain are marked `~`: they are at today's price.
+fn approx(plan: bool, c: Cents) -> String {
+    if plan { format!("~{c}") } else { c.to_string() }
+}
+
 fn row_text(r: &DonationRow) -> String {
     let plan = r.donation.is_plan();
-    let approx = |c: Cents| if plan { format!("~{c}") } else { c.to_string() };
     let claimed = if plan {
         "plan"
     } else if r.donation.claimed {
@@ -38,9 +41,9 @@ fn row_text(r: &DonationRow) -> String {
         r.donation.date,
         r.donation.ticker,
         r.donation.shares.to_string(),
-        approx(r.totals.value),
+        approx(plan, r.totals.value),
         r.totals.basis.to_string(),
-        approx(r.totals.gain),
+        approx(plan, r.totals.gain),
     )
 }
 
@@ -51,15 +54,15 @@ fn line_header() -> String {
     )
 }
 
-fn line_text(l: &LineRow) -> String {
+fn line_text(l: &LineRow, plan: bool) -> String {
     format!(
         "  {} {:>9} {:>8} {:>11} {:>11} {:>11}  {}{}",
         l.lot.bought,
         l.line.shares.to_string(),
         l.lot.price.to_string(),
         l.line.basis.to_string(),
-        l.line.value.to_string(),
-        l.line.gain.to_string(),
+        approx(plan, l.line.value),
+        approx(plan, l.line.gain),
         if l.long_term { "LT" } else { "ST" },
         if l.manual { " *" } else { "" },
     )
@@ -70,7 +73,7 @@ fn notes(r: &DonationRow) -> Vec<String> {
     let mut notes = Vec::new();
     if r.shortfall > Shares::ZERO {
         notes.push(format!(
-            "Short {} shares: no other long-term lot gains here; o picks by hand",
+            "Short {} shares: no long-term lot that gains is free; o picks by hand",
             r.shortfall
         ));
     }
@@ -133,7 +136,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: 
         } else {
             Style::new()
         };
-        Line::styled(line_text(l), style)
+        Line::styled(line_text(l, r.donation.is_plan()), style)
     }));
     if shown < r.lines.len() {
         lines.push(Line::from(format!(
@@ -236,6 +239,19 @@ pub(super) mod tests {
             "{rows:?}"
         );
         assert_eq!(rows[1].matches('~').count(), 2, "{rows:?}");
+    }
+
+    #[test]
+    fn a_plans_lines_mark_their_value_and_gain_approximate() {
+        let mut app = app_with_donation();
+        plan(&mut app, "100");
+        let text = screen(&mut app, 80, 24);
+        let line = text.lines().find(|l| l.contains("2021-01-10")).unwrap();
+        assert_eq!(line.matches('~').count(), 2, "{line}");
+        press(&mut app, KeyCode::Up);
+        let text = screen(&mut app, 80, 24);
+        let line = text.lines().find(|l| l.contains("2020-01-10")).unwrap();
+        assert!(!line.contains('~'), "{line}");
     }
 
     #[test]
