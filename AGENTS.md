@@ -53,7 +53,8 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | `src/donate.rs` | The policy over `db`: previewing and saving a plan, recording (re-running the selection with manual picks kept, refusing a shortfall), and the automatic selection the override's `A` restores. |
 | `src/summary.rs` | The rows both screens draw, in neither medium: `lots` (what is left of each lot, valued at the current price, and per-ticker totals) and `donations` (each donation's totals, shortfall, and flagged lines). |
 | `src/tui/` | The screens; `ratatui` is named only here. `app` holds the one `App` and dispatches keys; `form` is the labelled-field modal every form is built on; `help` holds the key tables the footers and the `?` panel are drawn from; `lots` draws the Lots screen; `donations` draws the Donations screen; `plan_form` is the plan form and its live preview; `override_form` is the override: shares typed per lot, typed rows marked manual. |
-| `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI. |
+| `src/config.rs` | The TOML config file; only a [backup] section. serde is named only here. |
+| `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI; `backup` is the finance-utils backup. The scheduled check runs only on the default database, and never after `funder backup`. |
 
 ## Invariants worth knowing before editing
 
@@ -63,6 +64,13 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
   allocations wholesale inside a transaction. Nothing else inserts into `allocation`.
 - **`manual` allocations survive a re-run of the selection** (`calc::select::with_manual`); every
   imported allocation is manual.
+
+## Backup
+
+Backups go through `jluszcz_finance_utils::backup` (its AGENTS.md holds the invariants). `lib.rs`'s
+`BACKUP` names the app, and `db::snapshot` is the snapshot, which keeps `rusqlite` in `src/db/`.
+`funder.tf`'s IAM policy must allow `PutObject` only with `If-None-Match` present, and its
+`<bucket arn>/*` must match the crate's un-prefixed keys.
 
 ## Testing conventions
 
