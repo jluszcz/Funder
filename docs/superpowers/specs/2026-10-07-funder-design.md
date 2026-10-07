@@ -37,7 +37,7 @@ than purchase.
 |---|---|---|
 | `lot` | id, ticker, bought (date), shares, price | A purchase, never split. |
 | `donation` | id, ticker, date, shares, value (NULL while planned), claimed (bool) | `value IS NULL` ⇔ the donation is a **plan**. A plan's `date` is the date it was planned. |
-| `allocation` | id, lot_id, donation_id, shares, manual (bool) | `UNIQUE (lot_id, donation_id)`, `shares > 0`. `manual` marks a row the owner edited in the override. |
+| `allocation` | lot_id, donation_id, shares, manual (bool) | `PRIMARY KEY (lot_id, donation_id)` — nothing addresses an allocation but by its lot and donation. `shares > 0`. `manual` marks a row chosen by hand. |
 | `price` | ticker, date, price | `PRIMARY KEY (ticker, date)`. The newest row per ticker is the current price. |
 
 Schema baseline in `src/db/schema.sql`, migrations as an arm chain in `src/db/migration.rs`,
@@ -64,11 +64,17 @@ arithmetic, which clamps Feb 29 to Feb 28).
 shares from a lot at price `p_a`:
 
 - basis_a = round_half_up(s_a × p_a / 1000)
-- value_a = round_half_up(V × s_a / S), except the last allocation (in display order), which takes
-  `V − Σ others` so the parts sum to `V` exactly
-- gain_a = value_a − basis_a; the donation's gain is Σ gain_a = V − Σ basis_a
+- value_a = round_half_up(V × s_a / S)
+- gain_a = value_a − basis_a
 
-A plan uses `V = S × current price` and is displayed with `~`. An undonated remainder of a lot is
+The donation's own totals are not the sum of its rounded lines: its basis is
+round_half_up(Σ s_a × p_a / 1000), rounded once, and its gain is `V − basis`. That is the
+spreadsheet's figure to within a cent however many lots a donation draws on, where summing
+per-line roundings could drift by half a cent a line. A line may therefore differ from its share of
+the total by a cent.
+
+A plan has no `V`: each line's value is `s_a × current price`, its total the sum of those, and it
+is displayed with `~`. An undonated remainder of a lot is
 valued at the current price; with no price on record, value and gain are `—`.
 
 **`select.rs`** — the automatic selection for a donation of `S` shares at per-share price `P`
@@ -98,8 +104,9 @@ columns compress before anything wraps.
 ### 1 — Lots
 
 A table of every lot: Bought, Ticker, Shares, Left, Price, and — for the undonated `Left` — Basis,
-Value, Gain, and Term (LT/ST as of today). A footer line per ticker totals the undonated shares,
-basis, value and gain. The header shows each ticker's current price and its date.
+Value, Gain, and Term (LT/ST as of today), the money columns in whole dollars. A line per ticker
+under the table shows its current price and that price's date, and totals the undonated shares,
+basis and gain.
 
 | Key | Action |
 |---|---|
@@ -161,18 +168,20 @@ fixed cells.
 Funder is the third consumer, so these move into finance-utils first, each its own PR, and Funder
 uses them from the start. Paychecker and MisterManager adopt them afterwards.
 
-1. **Date field stepping** — `Step` and stepping a date by a day, week, or month (clamping the
-   day), plus the key-to-step mapping, beside `tui::date::parse_shorthand`. Today in Paychecker's
-   `tui/form.rs` and MisterManager's `tui/worksheet.rs` and `tui/planning/confirm.rs`.
-2. **Amount parsing** — parsing typed text into `Cents`, in `money`. Today in both `tui/form.rs`.
-3. **Help tables** — the `Entry` shape and the footer join, in `tui`; each app keeps its tables.
-   Today in both `tui/help.rs`.
-4. **Common CLI flags** — a clap `Args` struct for `--db`, `--scratch`, `--today`, `--config`,
-   flattened into each app's `Cli`. Today in `pc.rs` and `mm.rs`.
+1. **Date field stepping and parsing** — `tui::date::Step` (a day, a week, a month, clamping the
+   day), the key-to-step mapping, and `tui::date::parse` (`YYYY-MM-DD` or `M/D`), beside
+   `parse_shorthand`. Today in Paychecker's `tui/form.rs` and MisterManager's `tui/form.rs` and
+   `tui/app/mod.rs`.
+2. **Help tables** — `tui::help::{Entry, Label}`, the footer join, and the help panel; each app
+   keeps its own tables. Today in both `tui/help.rs`.
+3. **Common CLI flags** — `cli::CommonArgs`, a clap `Args` struct for `--db`, `--scratch`,
+   `--today`, `--config`, flattened into each app's `Cli`, with the scratch-copy resolution beside
+   it. Today in `pc.rs` and `mm.rs`.
 
-Not extracted: the migration runner, `snapshot` and connection setup (finance-utils' "rusqlite is
-never a dependency" rule stands); workbook cell helpers (too small and app-specific); `Shares`
-(one consumer).
+Not extracted: amount parsing (both apps' `parse_amount` is `Cents::from_str`, which already strips
+`$`, commas and spaces; Paychecker's blank-is-zero is its own rule); the migration runner,
+`snapshot` and connection setup (finance-utils' "rusqlite is never a dependency" rule stands);
+workbook cell helpers (too small and app-specific); `Shares` (one consumer).
 
 ## Repository and CI
 
@@ -201,11 +210,11 @@ Public GitHub repo `jluszcz/Funder`, set up like Paychecker:
 - Workbook oracle (`tests/`, `#![cfg(feature = "import")]`): `FUNDER_WORKBOOK` names the workbook,
   with no default; unset or absent skips loudly, `FUNDER_REQUIRE_WORKBOOK=1` fails instead. It
   imports the workbook and asserts each donation's gain against the workbook's own cached Capital
-  Gains cell, to the cent.
+  Gains cell, to within one cent.
 
 ## Order of work
 
-1. finance-utils PRs 1–4.
+1. finance-utils PRs 1–3.
 2. Funder repo: scaffold, CI, dependabot, pre-commit, ruleset.
 3. `Shares`, `db`, `calc`.
 4. Lots screen.
