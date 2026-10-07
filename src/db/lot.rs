@@ -179,7 +179,8 @@ fn check_editable(conn: &Connection, id: LotId, lot: &NewLot) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::open_in_memory;
+    use crate::calc::select::Pick;
+    use crate::db::{DonationInput, open_in_memory};
 
     fn day(y: i32, m: u32, d: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(y, m, d).unwrap()
@@ -254,5 +255,62 @@ mod tests {
         let db = open_in_memory().unwrap();
         let err = db.delete_lot(LotId(7)).unwrap_err();
         assert!(err.to_string().contains("gone"), "{err}");
+    }
+
+    fn donate(db: &crate::db::Db, lot: LotId, shares: i64, on: NaiveDate) {
+        db.write_donation(
+            None,
+            &DonationInput {
+                ticker: "TDF45".into(),
+                date: on,
+                shares: Shares::whole(shares),
+                value: Some(Cents(10_000)),
+            },
+            &[Pick {
+                lot,
+                shares: Shares::whole(shares),
+                manual: false,
+            }],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_donated_lot_cannot_drop_below_its_allocated_shares() {
+        let db = open_in_memory().unwrap();
+        let id = db.insert_lot(&new_lot(day(2020, 5, 1), 10, 2_000)).unwrap();
+        donate(&db, id, 6, day(2026, 1, 5));
+        let err = db
+            .update_lot(id, &new_lot(day(2020, 5, 1), 5, 2_000))
+            .unwrap_err();
+        assert!(err.to_string().contains("6.000 shares"), "{err}");
+        db.update_lot(id, &new_lot(day(2020, 5, 1), 6, 2_100))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_donated_lot_keeps_its_ticker_and_cannot_move_past_the_donation() {
+        let db = open_in_memory().unwrap();
+        let id = db.insert_lot(&new_lot(day(2020, 5, 1), 10, 2_000)).unwrap();
+        donate(&db, id, 1, day(2026, 1, 5));
+        let mut other = new_lot(day(2020, 5, 1), 10, 2_000);
+        other.ticker = "USM".into();
+        assert!(db.update_lot(id, &other).is_err());
+        assert!(
+            db.update_lot(id, &new_lot(day(2026, 1, 6), 10, 2_000))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn deleting_a_donated_lot_is_refused_naming_the_donation() {
+        let db = open_in_memory().unwrap();
+        let id = db.insert_lot(&new_lot(day(2020, 5, 1), 10, 2_000)).unwrap();
+        donate(&db, id, 1, day(2026, 1, 5));
+        let err = db.delete_lot(id).unwrap_err();
+        assert!(
+            err.to_string().contains("the donation of 2026-01-05"),
+            "{err}"
+        );
     }
 }

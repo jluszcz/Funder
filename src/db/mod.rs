@@ -1,10 +1,12 @@
 //! SQLite storage: opening and migrating the database, and the rows it holds.
 //! `rusqlite` is named only under here.
 
+mod donation;
 mod lot;
 mod migration;
 mod price;
 
+pub use donation::{Allocation, Bulk, BulkDonation, Donation, DonationInput};
 pub use lot::{Lot, NewLot};
 pub use price::Price;
 
