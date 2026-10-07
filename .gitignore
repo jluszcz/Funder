@@ -1,0 +1,9 @@
+*.db
+*.db-shm
+*.db-wal
+*.tfstate*
+.envrc
+.idea/
+.superpowers/
+.terraform/
+target/

@@ -1,0 +1,28 @@
+[package]
+name = "funder"
+authors = ["Jacob Luszcz"]
+version = "0.1.0"
+edition = "2024"
+
+[features]
+# The workbook importer: `funder import`, `src/import/`, and `calamine` under
+# it. Off by default: it is run once, and a default build compiles no
+# spreadsheet parser.
+import = ["dep:calamine"]
+
+[dependencies]
+anyhow = "1.0"
+calamine = { version = "0.36", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+clap = { version = "4.6", features = ["derive"] }
+jluszcz_finance_utils = { git = "https://github.com/jluszcz/finance-utils", features = ["backup", "cli", "money", "scratch", "tui"] }
+ratatui = "0.30"
+rusqlite = { version = "0.40", features = ["bundled", "chrono"] }
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+jluszcz_finance_utils = { git = "https://github.com/jluszcz/finance-utils", features = ["test-support"] }
+
+[[bin]]
+name = "funder"
+path = "src/bin/funder.rs"
