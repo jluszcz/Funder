@@ -90,7 +90,7 @@ impl FromStr for Shares {
         let whole_cleaned = if whole.is_empty() {
             "0".to_string()
         } else {
-            validate_thousands_separators(whole)?
+            validate_thousands_separators(whole, trimmed)?
         };
 
         // Validate fractional part: only digits allowed
@@ -122,10 +122,10 @@ impl FromStr for Shares {
 
 /// Validates and returns the whole part with commas removed, or an error if
 /// commas are not properly placed as thousands separators.
-/// Valid: "1", "12", "123", "1234", "1,234", "12,345", "123,456,789", "1000000000"
-/// Invalid: "1,23", "12,34", ",123", "1234,567", "1,2,3"
-fn validate_thousands_separators(whole: &str) -> Result<String> {
-    let err = || anyhow!("invalid thousands separators");
+/// Valid: "1", "12", "123", "1234", "1,234", "12,345", "123,456,789", "1000000000", "0", "0.5"
+/// Invalid: "1,23", "12,34", ",123", "1234,567", "1,2,3", "0,123", "00,123"
+fn validate_thousands_separators(whole: &str, trimmed: &str) -> Result<String> {
+    let err = || anyhow!("not a share count: {:?}", trimmed);
 
     if whole.starts_with(',') || whole.ends_with(',') {
         return Err(err());
@@ -141,8 +141,12 @@ fn validate_thousands_separators(whole: &str) -> Result<String> {
         return Ok(parts[0].to_string());
     }
 
-    // Multiple parts with commas: first part must be 1-3 digits
-    if parts[0].is_empty() || parts[0].len() > 3 || !parts[0].chars().all(|c| c.is_ascii_digit()) {
+    // Multiple parts with commas: first part must be 1-3 digits and not start with '0'
+    if parts[0].is_empty()
+        || parts[0].len() > 3
+        || parts[0].starts_with('0')
+        || !parts[0].chars().all(|c| c.is_ascii_digit())
+    {
         return Err(err());
     }
 
@@ -254,6 +258,13 @@ mod tests {
     #[test]
     fn malformed_thousands_separators_are_refused() {
         for bad in ["12,34", "1,2,3", "1 2", "1_000", ",123", "1234,567"] {
+            assert!(bad.parse::<Shares>().is_err(), "{bad:?} parsed");
+        }
+    }
+
+    #[test]
+    fn a_thousands_group_starting_with_zero_is_refused() {
+        for bad in ["0,123", "00,123"] {
             assert!(bad.parse::<Shares>().is_err(), "{bad:?} parsed");
         }
     }
