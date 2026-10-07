@@ -19,6 +19,8 @@ and `d` add, edit, and delete a lot; `?` lists every key.
 
 `2` shows the Donations. `n` plans one from a dollar target, drawing on the long-term lots with the
 highest gain; `r` records it once the shares have moved; `c` marks it claimed.
+`o` lists every lot a donation could draw on, short-term and losing ones in red, and takes the
+shares typed against each; those choices survive recording. `A` restores the automatic choice.
 
 ## No real data in the repository
 

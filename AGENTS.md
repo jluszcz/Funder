@@ -52,7 +52,7 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | `src/ticker.rs` | `normalize`: a ticker as stored, trimmed and upper-case. |
 | `src/donate.rs` | The policy over `db`: previewing and saving a plan, recording (re-running the selection with manual picks kept, refusing a shortfall), and the automatic selection the override's `A` restores. |
 | `src/summary.rs` | The rows both screens draw, in neither medium: `lots` (what is left of each lot, valued at the current price, and per-ticker totals) and `donations` (each donation's totals, shortfall, and flagged lines). |
-| `src/tui/` | The screens; `ratatui` is named only here. `app` holds the one `App` and dispatches keys; `form` is the labelled-field modal every form is built on; `help` holds the key tables the footers and the `?` panel are drawn from; `lots` draws the Lots screen; `donations` draws the Donations screen; `plan_form` is the plan form and its live preview. |
+| `src/tui/` | The screens; `ratatui` is named only here. `app` holds the one `App` and dispatches keys; `form` is the labelled-field modal every form is built on; `help` holds the key tables the footers and the `?` panel are drawn from; `lots` draws the Lots screen; `donations` draws the Donations screen; `plan_form` is the plan form and its live preview; `override_form` is the override: shares typed per lot, typed rows marked manual. |
 | `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI. |
 
 ## Invariants worth knowing before editing

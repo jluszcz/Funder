@@ -45,6 +45,11 @@ pub(super) const DONATIONS: &[Entry] = &[
         "Edit the selected donation's date, shares, or value",
     ),
     Entry::own(
+        "o",
+        "lots",
+        "Choose the lots the selected donation draws on, by hand",
+    ),
+    Entry::own(
         "c",
         "claim",
         "Mark the selected donation claimed on a tax return, or not",
@@ -62,6 +67,18 @@ pub(super) const FORM: &[Entry] = &[
     Entry::hidden("[ ]", "Date: a month"),
     Entry::hidden("Ctrl+U", "Clear to the start of the field"),
     Entry::own("Enter", "save", "Save"),
+    Entry::own("Esc", "cancel", "Close without saving"),
+];
+
+pub(super) const OVERRIDE: &[Entry] = &[
+    Entry::hidden("↑/↓", "Select a lot"),
+    Entry::hidden("0-9 .", "Type the shares to take from the selected lot"),
+    Entry::own(
+        "A",
+        "auto",
+        "Discard what was typed and restore the automatic choice",
+    ),
+    Entry::own("Enter", "save", "Save the lots"),
     Entry::own("Esc", "cancel", "Close without saving"),
 ];
 
@@ -83,7 +100,7 @@ mod tests {
     use super::*;
     use jluszcz_finance_utils::tui::help::duplicate_keys;
 
-    const ALL: &[&[Entry]] = &[GLOBAL, LOTS, DONATIONS, FORM, CONFIRM, HELP];
+    const ALL: &[&[Entry]] = &[GLOBAL, LOTS, DONATIONS, FORM, OVERRIDE, CONFIRM, HELP];
 
     #[test]
     fn no_table_names_a_key_twice() {

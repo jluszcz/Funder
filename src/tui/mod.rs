@@ -5,6 +5,7 @@ mod donations;
 mod form;
 mod help;
 mod lots;
+mod override_form;
 mod plan_form;
 mod text;
 

@@ -4,9 +4,10 @@ use super::donations::{self, DonationsView};
 use super::form::{self, Field, Form, Outcome};
 use super::help;
 use super::lots::{self, LotsView};
+use super::override_form::{self, OverrideForm};
 use super::plan_form::PlanForm;
 use super::text::is_bare;
-use crate::db::{Db, NewLot};
+use crate::db::{Db, DonationInput, NewLot};
 use crate::donate;
 use crate::id::{DonationId, LotId};
 use crate::summary::{self, DonationRow, LotRow, Lots};
@@ -45,6 +46,7 @@ pub(super) enum Modal {
         donation: DonationId,
     },
     DeleteDonation(DonationId),
+    Override(OverrideForm),
 }
 
 const LOT_BOUGHT: usize = 0;
@@ -329,6 +331,12 @@ impl App {
                     donation: d.id,
                 });
             }
+            KeyCode::Char('o') => {
+                if let Some(r) = self.selected_donation() {
+                    let form = OverrideForm::open(&self.db, r.donation.id)?;
+                    self.modal = Some(Modal::Override(form));
+                }
+            }
             KeyCode::Char('c') => {
                 if let Some(r) = self.selected_donation() {
                     let (id, claimed, date) = (r.donation.id, r.donation.claimed, r.donation.date);
@@ -438,6 +446,34 @@ impl App {
                     }
                 }
             },
+            Modal::Override(mut o) => match o.on_key(key, &self.db) {
+                Ok(Outcome::Continue) => self.modal = Some(Modal::Override(o)),
+                Ok(Outcome::Cancel) => {}
+                Ok(Outcome::Submit) => {
+                    let saved = o.picks().and_then(|picks| {
+                        self.db.write_donation(
+                            Some(o.donation.id),
+                            &DonationInput::of(&o.donation),
+                            &picks,
+                        )
+                    });
+                    match saved {
+                        Ok(id) => {
+                            self.reload()?;
+                            self.select_donation(id);
+                            self.info(format!("Saved the lots of {}", o.donation.date));
+                        }
+                        Err(e) => {
+                            self.modal = Some(Modal::Override(o));
+                            return Err(e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.modal = Some(Modal::Override(o));
+                    return Err(e);
+                }
+            },
             Modal::DeleteDonation(id) => {
                 if is_yes(key) {
                     self.db.delete_donation(id)?;
@@ -495,6 +531,7 @@ impl App {
                 Modal::Lot { form, .. } | Modal::Price { form, .. } | Modal::Record { form, .. },
             ) => form::render(frame, body, form, &[]),
             Some(Modal::Plan(plan)) => form::render(frame, body, &plan.form, &plan.notes()),
+            Some(Modal::Override(o)) => override_form::render(frame, body, o),
             Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)) | None => {}
         }
         if self.help {
@@ -529,6 +566,7 @@ impl App {
                 ),
                 _,
             ) => vec![help::FORM],
+            (Some(Modal::Override(_)), _) => vec![help::OVERRIDE],
             (Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)), _) => vec![help::CONFIRM],
             (None, Screen::Lots) => vec![help::LOTS, help::GLOBAL],
             (None, Screen::Donations) => vec![help::DONATIONS, help::GLOBAL],
@@ -543,6 +581,9 @@ impl App {
             Some(Modal::Lot { .. } | Modal::Price { .. } | Modal::Plan(_) | Modal::Record { .. })
         ) {
             topics.push(("Form", help::FORM));
+        }
+        if matches!(self.modal, Some(Modal::Override(_))) {
+            topics.push(("Override", help::OVERRIDE));
         }
         match self.screen {
             Screen::Lots => topics.push(("Lots", help::LOTS)),
@@ -857,5 +898,43 @@ mod tests {
         assert_eq!(app.screen, Screen::Donations);
         press(&mut app, KeyCode::Char('1'));
         assert_eq!(app.screen, Screen::Lots);
+    }
+
+    #[test]
+    fn o_saves_a_hand_picked_lot_and_recording_keeps_it() {
+        let mut app = on_donations(app());
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "100");
+        press(&mut app, KeyCode::Enter); // a plan of 2 shares from the 2021 lot
+        press(&mut app, KeyCode::Char('o'));
+        app.on_key(ctrl('u'));
+        press(&mut app, KeyCode::Down);
+        type_text(&mut app, "2");
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            app.modal.is_none(),
+            "{:?}",
+            app.status.as_ref().map(|s| &s.text)
+        );
+        press(&mut app, KeyCode::Char('r'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "100");
+        press(&mut app, KeyCode::Enter);
+        let lines = &app.donations[app.donations_view.selected].lines;
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].lot.bought, day(2020, 1, 10));
+        assert!(lines[0].manual);
+    }
+
+    #[test]
+    fn an_override_of_a_recorded_donation_that_does_not_add_up_stays_open() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('o'));
+        app.on_key(ctrl('u'));
+        type_text(&mut app, "3");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.modal, Some(Modal::Override(_))));
+        assert!(app.status.as_ref().unwrap().text.contains("not the 4.000"));
     }
 }
