@@ -46,6 +46,8 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | `src/money.rs` | `Cents`, re-exported from finance-utils. |
 | `src/shares.rs` | `Shares(i64)`, thousandths of a share, and `round_div`, the one rounding rule (half away from zero, saturating). |
 | `src/calc/` | Pure arithmetic: `term` (long-term is more than a year), `gain` (`Valuation`, per-lot `Line`s, a donation's `Totals` with the basis rounded once), `select` (highest long-term gain first, manual picks kept), `plan_shares`. No database. |
+| `src/db/` | Schema and queries, one module per table; the only place `rusqlite` is named. `Db` holds a private `Connection`. Multi-statement writes go through `Db::transaction`, which is not reentrant. A `get` by id errors when the row is gone. |
+| `src/db/migration.rs` | The frozen `schema.sql` baseline and the arm chain above it; a schema change is an appended arm. |
 | `src/id.rs` | `LotId`, `DonationId`: one id type per table. |
 | `src/ticker.rs` | `normalize`: a ticker as stored, trimmed and upper-case. |
 | `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI. |
