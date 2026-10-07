@@ -34,4 +34,9 @@ mod tests {
             assert!(normalize(bad).is_err(), "{bad:?} accepted");
         }
     }
+
+    #[test]
+    fn non_ascii_characters_in_a_ticker_are_refused() {
+        assert!(normalize("tdf45é").is_err());
+    }
 }

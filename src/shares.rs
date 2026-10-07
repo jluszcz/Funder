@@ -62,39 +62,98 @@ impl fmt::Display for Shares {
 impl FromStr for Shares {
     type Err = anyhow::Error;
 
-    /// Commas, underscores and spaces are dropped; a sign is not accepted,
-    /// since no lot or donation holds a negative number of shares.
+    /// Parses a share count. Surrounding whitespace is trimmed. Commas are accepted
+    /// as thousands separators in the whole part (groups of exactly 3 after the first
+    /// 1-3 digits). Interior whitespace and underscores are refused; negative numbers
+    /// are refused. Trailing zeros in the fractional part are allowed and stripped.
     fn from_str(s: &str) -> Result<Shares> {
-        let err = || anyhow!("not a share count: {:?}", s.trim());
-        let cleaned: String = s
-            .chars()
-            .filter(|c| !matches!(c, ',' | '_' | ' '))
-            .collect();
-        let (whole, frac) = cleaned.split_once('.').unwrap_or((cleaned.as_str(), ""));
+        let trimmed = s.trim();
+        let err = || anyhow!("not a share count: {:?}", trimmed);
+
+        if trimmed.is_empty() {
+            return Err(err());
+        }
+
+        // Reject underscores and interior whitespace anywhere
+        if trimmed.contains('_') || trimmed.chars().any(|c| c.is_whitespace()) {
+            return Err(err());
+        }
+
+        let (whole, frac) = trimmed.split_once('.').unwrap_or((trimmed, ""));
+
+        // Both whole and frac can be empty, but not both
         if whole.is_empty() && frac.is_empty() {
             return Err(err());
         }
-        if !whole.chars().all(|c| c.is_ascii_digit()) || !frac.chars().all(|c| c.is_ascii_digit()) {
+
+        // Validate thousands separator placement in whole part (if non-empty)
+        let whole_cleaned = if whole.is_empty() {
+            "0".to_string()
+        } else {
+            validate_thousands_separators(whole)?
+        };
+
+        // Validate fractional part: only digits allowed
+        if !frac.chars().all(|c| c.is_ascii_digit()) {
             return Err(err());
         }
-        if frac.len() > 3 {
-            bail!("{:?} has more than three decimal places", s.trim());
+
+        // Allow trailing zeros; strip them for the check but preserve count for parsing
+        let frac_trimmed = frac.trim_end_matches('0');
+        if frac_trimmed.len() > 3 {
+            bail!("{:?} has more than three decimal places", trimmed);
         }
-        let whole: i64 = if whole.is_empty() {
-            0
-        } else {
-            whole.parse().map_err(|_| err())?
-        };
-        let frac: i64 = format!("{frac:0<3}").parse().map_err(|_| err())?;
+
+        let whole: i64 = whole_cleaned.parse().map_err(|_| err())?;
+        let frac: i64 = format!("{:0<3}", frac_trimmed).parse().map_err(|_| err())?;
+
         let n = whole
             .checked_mul(SCALE)
             .and_then(|w| w.checked_add(frac))
             .ok_or_else(err)?;
+
         if n > Shares::MAX.0 {
-            bail!("{:?} is more shares than Funder tracks", s.trim());
+            bail!("{:?} is more shares than Funder tracks", trimmed);
         }
+
         Ok(Shares(n))
     }
+}
+
+/// Validates and returns the whole part with commas removed, or an error if
+/// commas are not properly placed as thousands separators.
+/// Valid: "1", "12", "123", "1234", "1,234", "12,345", "123,456,789", "1000000000"
+/// Invalid: "1,23", "12,34", ",123", "1234,567", "1,2,3"
+fn validate_thousands_separators(whole: &str) -> Result<String> {
+    let err = || anyhow!("invalid thousands separators");
+
+    if whole.starts_with(',') || whole.ends_with(',') {
+        return Err(err());
+    }
+
+    let parts: Vec<&str> = whole.split(',').collect();
+
+    // If there's only one part (no commas), must be all digits and non-empty
+    if parts.len() == 1 {
+        if parts[0].is_empty() || !parts[0].chars().all(|c| c.is_ascii_digit()) {
+            return Err(err());
+        }
+        return Ok(parts[0].to_string());
+    }
+
+    // Multiple parts with commas: first part must be 1-3 digits
+    if parts[0].is_empty() || parts[0].len() > 3 || !parts[0].chars().all(|c| c.is_ascii_digit()) {
+        return Err(err());
+    }
+
+    // Remaining parts must be exactly 3 digits
+    for part in &parts[1..] {
+        if part.len() != 3 || !part.chars().all(|c| c.is_ascii_digit()) {
+            return Err(err());
+        }
+    }
+
+    Ok(parts.join(""))
 }
 
 impl Add for Shares {
@@ -190,5 +249,36 @@ mod tests {
         assert_eq!(total, Shares(3_500));
         assert_eq!(total - Shares(500), Shares(3_000));
         assert_eq!(Shares(500).saturating_sub(Shares(900)), Shares::ZERO);
+    }
+
+    #[test]
+    fn malformed_thousands_separators_are_refused() {
+        for bad in ["12,34", "1,2,3", "1 2", "1_000", ",123", "1234,567"] {
+            assert!(bad.parse::<Shares>().is_err(), "{bad:?} parsed");
+        }
+    }
+
+    #[test]
+    fn whitespace_other_than_surrounding_is_refused() {
+        assert!("1 2".parse::<Shares>().is_err());
+    }
+
+    #[test]
+    fn tabs_and_newlines_in_surrounding_whitespace_are_trimmed() {
+        assert_eq!(parse("\t7\n"), Shares(7_000));
+        assert_eq!(parse("\t7.5\n"), Shares(7_500));
+    }
+
+    #[test]
+    fn large_numbers_with_proper_thousands_separators_parse() {
+        assert_eq!(parse("12,345,678.9"), Shares(12_345_678_900));
+        assert_eq!(parse("1,000"), Shares(1_000_000));
+    }
+
+    #[test]
+    fn trailing_zeros_in_the_fractional_part_are_allowed() {
+        assert_eq!(parse("1.2500"), Shares(1_250));
+        assert_eq!(parse("1.5000"), Shares(1_500));
+        assert_eq!(parse("1.0"), Shares(1_000));
     }
 }
