@@ -50,6 +50,8 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | `src/db/migration.rs` | The frozen `schema.sql` baseline and the arm chain above it; a schema change is an appended arm. |
 | `src/id.rs` | `LotId`, `DonationId`: one id type per table. |
 | `src/ticker.rs` | `normalize`: a ticker as stored, trimmed and upper-case. |
+| `src/donate.rs` | The policy over `db`: previewing and saving a plan, recording (re-running the selection with manual picks kept, refusing a shortfall), and the automatic selection the override's `A` restores. |
+| `src/summary.rs` | The rows both screens draw, in neither medium: `lots` (what is left of each lot, valued at the current price, and per-ticker totals) and `donations` (each donation's totals, shortfall, and flagged lines). |
 | `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI. |
 
 ## Invariants worth knowing before editing
