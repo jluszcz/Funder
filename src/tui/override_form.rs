@@ -49,6 +49,12 @@ impl OverrideForm {
         let mut candidates = db.candidates(&donation.ticker, Some(id))?;
         candidates.retain(|c| c.bought <= donation.date);
         candidates.sort_by_key(|c| (c.price, c.bought, c.lot));
+        for a in &allocations {
+            ensure!(
+                candidates.iter().any(|c| c.lot == a.lot),
+                "the donation draws on a lot this screen cannot list"
+            );
+        }
         let rows = candidates
             .into_iter()
             .map(|c| {
@@ -138,8 +144,8 @@ impl OverrideForm {
         Ok(picks)
     }
 
-    pub(super) fn allocated(&self) -> Option<Shares> {
-        self.picks().ok().map(|p| p.iter().map(|p| p.shares).sum())
+    pub(super) fn allocated(&self) -> Result<Shares> {
+        Ok(self.picks()?.iter().map(|p| p.shares).sum())
     }
 }
 
@@ -154,34 +160,44 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
         "  {:<10} {:>9} {:>8}  {:<7} {}",
         "Bought", "Free", "Price", "Term", "Take"
     ))];
-    lines.extend(o.rows.iter().enumerate().map(|(i, r)| {
-        let marker = if i == o.selected { "›" } else { " " };
-        let term = match (r.long_term, r.losing) {
-            (true, false) => "LT",
-            (true, true) => "LT loss",
-            (false, false) => "ST",
-            (false, true) => "ST loss",
-        };
-        let style = if r.long_term && !r.losing {
-            Style::new()
-        } else {
-            Style::new().fg(Color::Red)
-        };
-        Line::styled(
-            format!(
-                "{marker} {} {:>9} {:>8}  {term:<7} {}",
-                r.candidate.bought,
-                r.candidate.available.to_string(),
-                r.candidate.price.to_string(),
-                r.text.value()
-            ),
-            style,
-        )
-    }));
+    // Header, blank, and the total stay pinned; the border takes two more.
+    let room = usize::from(area.height).saturating_sub(5).max(1);
+    let offset = o.selected.saturating_sub(room - 1);
+    lines.extend(
+        o.rows
+            .iter()
+            .enumerate()
+            .skip(offset)
+            .take(room)
+            .map(|(i, r)| {
+                let marker = if i == o.selected { "›" } else { " " };
+                let term = match (r.long_term, r.losing) {
+                    (true, false) => "LT",
+                    (true, true) => "LT loss",
+                    (false, false) => "ST",
+                    (false, true) => "ST loss",
+                };
+                let style = if r.long_term && !r.losing {
+                    Style::new()
+                } else {
+                    Style::new().fg(Color::Red)
+                };
+                Line::styled(
+                    format!(
+                        "{marker} {} {:>9} {:>8}  {term:<7} {}",
+                        r.candidate.bought,
+                        r.candidate.available.to_string(),
+                        r.candidate.price.to_string(),
+                        r.text.value()
+                    ),
+                    style,
+                )
+            }),
+    );
     lines.push(Line::default());
     lines.push(Line::from(match o.allocated() {
-        Some(a) => format!("Taking {a} of {} shares", o.donation.shares),
-        None => "A typed share count does not parse".to_string(),
+        Ok(a) => format!("Taking {a} of {} shares", o.donation.shares),
+        Err(e) => format!("{e:#}"),
     }));
     let width = lines
         .iter()
@@ -201,7 +217,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
         let x = popup.x + 1 + (2 + 10 + 1 + 9 + 1 + 8 + 2 + 7 + 1 + r.text.caret()) as u16;
         frame.set_cursor_position((
             x.min(popup.right().saturating_sub(2)),
-            popup.y + 2 + o.selected as u16,
+            popup.y + 2 + (o.selected - offset) as u16,
         ));
     }
 }
@@ -209,7 +225,10 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::test_support::{fixture_db, key, today};
+    use crate::db::NewLot;
+    use crate::money::Cents;
+    use crate::tui::test_support::{day, draw, draw_buffer, fixture_db, key, today};
+    use jluszcz_finance_utils::tui::testing::buffer_text;
 
     fn plan(db: &Db, shares: i64) -> DonationId {
         crate::donate::save_plan(db, "TDF45", Shares::whole(shares), today()).unwrap()
@@ -228,7 +247,7 @@ mod tests {
         let o = OverrideForm::open(&db, id).unwrap();
         let typed: Vec<&str> = o.rows.iter().map(|r| r.text.value()).collect();
         assert_eq!(typed, ["10.000", "2.000"]);
-        assert_eq!(o.allocated(), Some(Shares::whole(12)));
+        assert_eq!(o.allocated().unwrap(), Shares::whole(12));
     }
 
     #[test]
@@ -271,5 +290,104 @@ mod tests {
         o.on_key(key(KeyCode::Char('A')), &db).unwrap();
         assert_eq!(o.rows[0].text.value(), "10.000");
         assert!(!o.rows[0].manual);
+    }
+
+    fn many_lots_db(count: u32) -> Db {
+        let db = fixture_db();
+        for n in 0..count {
+            db.insert_lot(&NewLot {
+                ticker: "TDF45".into(),
+                bought: day(2022, 1, 1) + chrono::Days::new(u64::from(n) * 5),
+                shares: Shares::whole(1),
+                price: Cents(1_600 + i64::from(n)),
+            })
+            .unwrap();
+        }
+        db
+    }
+
+    #[test]
+    fn many_lots_scroll_with_the_selection_and_keep_the_total_in_view() {
+        let db = many_lots_db(30);
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        for _ in 0..o.rows.len() {
+            o.on_key(key(KeyCode::Down), &db).unwrap();
+        }
+        let area = Rect::new(0, 0, 80, 23);
+        let text = draw(80, 24, |f| render(f, area, &o));
+        assert!(text.contains("›"), "{text}");
+        assert!(text.contains("Taking"), "{text}");
+        assert!(text.contains("Bought"), "{text}");
+        let last = o.rows.last().unwrap().candidate.bought.to_string();
+        assert!(text.contains(&last), "{text}");
+    }
+
+    #[test]
+    fn a_lot_this_donation_takes_whole_still_counts_its_shares_as_free() {
+        let db = fixture_db();
+        let id = plan(&db, 10);
+        let o = OverrideForm::open(&db, id).unwrap();
+        assert_eq!(o.rows[0].candidate.available, Shares::whole(10));
+        assert_eq!(o.rows[0].text.value(), "10.000");
+    }
+
+    #[test]
+    fn a_lot_bought_after_the_donation_date_is_not_listed() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        db.insert_lot(&NewLot {
+            ticker: "TDF45".into(),
+            bought: day(2026, 7, 1),
+            shares: Shares::whole(5),
+            price: Cents(1_000),
+        })
+        .unwrap();
+        let o = OverrideForm::open(&db, id).unwrap();
+        assert_eq!(o.rows.len(), 2);
+    }
+
+    #[test]
+    fn a_row_edited_back_to_blank_or_zero_takes_nothing() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        o.rows[0].text.set("");
+        o.rows[1].text.set("0");
+        assert!(o.picks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn short_term_and_losing_rows_are_labelled_and_drawn_red() {
+        let db = fixture_db();
+        db.set_price("USM", today(), Cents(5_000)).unwrap();
+        let id = crate::donate::save_plan(&db, "USM", Shares::whole(5), today()).unwrap();
+        let o = OverrideForm::open(&db, id).unwrap();
+        let area = Rect::new(0, 0, 80, 23);
+        let buffer = draw_buffer(80, 24, |f| render(f, area, &o));
+        let text = buffer_text(&buffer);
+        assert!(text.contains("ST loss"), "{text}");
+        let y = (0..24)
+            .find(|&y| {
+                (0..80)
+                    .map(|x| buffer[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    .contains("ST loss")
+            })
+            .unwrap();
+        let x = (0..80).find(|&x| buffer[(x, y)].symbol() == "S").unwrap();
+        assert_eq!(buffer[(x, y)].fg, Color::Red);
+    }
+
+    #[test]
+    fn a_total_over_a_lots_availability_says_so_instead_of_not_parsing() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        o.rows[0].text.set("11");
+        let area = Rect::new(0, 0, 80, 23);
+        let text = draw(80, 24, |f| render(f, area, &o));
+        assert!(text.contains("available"), "{text}");
+        assert!(!text.contains("does not parse"), "{text}");
     }
 }

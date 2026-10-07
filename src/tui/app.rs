@@ -937,4 +937,18 @@ mod tests {
         assert!(matches!(app.modal, Some(Modal::Override(_))));
         assert!(app.status.as_ref().unwrap().text.contains("not the 4.000"));
     }
+
+    #[test]
+    fn an_override_of_a_plan_that_exceeds_its_shares_stays_open() {
+        let mut app = on_donations(app());
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "100");
+        press(&mut app, KeyCode::Enter); // a plan of 2 shares
+        press(&mut app, KeyCode::Char('o'));
+        app.on_key(ctrl('u'));
+        type_text(&mut app, "3");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.modal, Some(Modal::Override(_))));
+        assert!(app.status.as_ref().unwrap().error);
+    }
 }
