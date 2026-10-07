@@ -76,33 +76,21 @@ impl Db {
     /// The donations and plans drawing on the lot, as a sentence fragment
     /// each: `the donation of 2026-01-02`, `the plan of 2026-06-01`.
     pub fn lot_users(&self, id: LotId) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT d.date, d.value IS NULL FROM allocation a
-             JOIN donation d ON d.id = a.donation_id
-             WHERE a.lot_id = ?1 ORDER BY d.date, d.id",
-        )?;
-        let users = stmt
-            .query_map([id.0], |r| {
-                let date: NaiveDate = r.get(0)?;
-                let plan: bool = r.get(1)?;
-                Ok(format!(
-                    "the {} of {date}",
-                    if plan { "plan" } else { "donation" }
-                ))
-            })?
-            .collect::<rusqlite::Result<_>>()?;
-        Ok(users)
+        lot_users_in(&self.conn, id)
     }
 
     pub fn delete_lot(&self, id: LotId) -> Result<()> {
-        let users = self.lot_users(id)?;
-        ensure!(
-            users.is_empty(),
-            "this lot is in {}: delete those or override them first",
-            users.join(", ")
-        );
-        self.conn.execute("DELETE FROM lot WHERE id = ?1", [id.0])?;
-        Ok(())
+        self.transaction(|conn| {
+            lot_in(conn, id)?;
+            let users = lot_users_in(conn, id)?;
+            ensure!(
+                users.is_empty(),
+                "this lot is in {}: delete those or override them first",
+                users.join(", ")
+            );
+            conn.execute("DELETE FROM lot WHERE id = ?1", [id.0])?;
+            Ok(())
+        })
     }
 
     /// What every donation and plan together draw on each lot.
@@ -132,6 +120,25 @@ pub(super) fn insert_lot(conn: &Connection, lot: &NewLot) -> Result<LotId> {
     Ok(LotId(conn.last_insert_rowid()))
 }
 
+fn lot_users_in(conn: &Connection, id: LotId) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT d.date, d.value IS NULL FROM allocation a
+         JOIN donation d ON d.id = a.donation_id
+         WHERE a.lot_id = ?1 ORDER BY d.date, d.id",
+    )?;
+    let users = stmt
+        .query_map([id.0], |r| {
+            let date: NaiveDate = r.get(0)?;
+            let plan: bool = r.get(1)?;
+            Ok(format!(
+                "the {} of {date}",
+                if plan { "plan" } else { "donation" }
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(users)
+}
+
 fn validate(lot: &NewLot) -> Result<()> {
     ensure!(lot.shares > Shares::ZERO, "a lot needs shares");
     ensure!(lot.price.0 > 0, "a lot needs a price");
@@ -140,6 +147,7 @@ fn validate(lot: &NewLot) -> Result<()> {
 
 fn check_editable(conn: &Connection, id: LotId, lot: &NewLot) -> Result<()> {
     validate(lot)?;
+    let current = lot_in(conn, id)?;
     let (allocated, earliest): (i64, Option<NaiveDate>) = conn.query_row(
         "SELECT COALESCE(SUM(a.shares), 0), MIN(d.date) FROM allocation a
          JOIN donation d ON d.id = a.donation_id WHERE a.lot_id = ?1",
@@ -149,7 +157,6 @@ fn check_editable(conn: &Connection, id: LotId, lot: &NewLot) -> Result<()> {
     if allocated == 0 {
         return Ok(());
     }
-    let current = lot_in(conn, id)?;
     let allocated = Shares(allocated);
     ensure!(
         lot.shares >= allocated,
@@ -231,5 +238,21 @@ mod tests {
         assert!(db.lot_users(id).unwrap().is_empty());
         db.delete_lot(id).unwrap();
         assert!(db.lots().unwrap().is_empty());
+    }
+
+    #[test]
+    fn editing_a_lot_that_is_gone_is_an_error() {
+        let db = open_in_memory().unwrap();
+        let err = db
+            .update_lot(LotId(7), &new_lot(day(2020, 5, 1), 10, 2_000))
+            .unwrap_err();
+        assert!(err.to_string().contains("gone"), "{err}");
+    }
+
+    #[test]
+    fn deleting_a_lot_that_is_gone_is_an_error() {
+        let db = open_in_memory().unwrap();
+        let err = db.delete_lot(LotId(7)).unwrap_err();
+        assert!(err.to_string().contains("gone"), "{err}");
     }
 }
