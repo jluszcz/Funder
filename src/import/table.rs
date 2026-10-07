@@ -60,27 +60,33 @@ const DONATIONS: &[&str] = &[
 ];
 const LOTS: &[&str] = &["Date", "Ticker", "Quantity", "Purchase Price"];
 
-/// Both tables, found by their headers in the first row. `None` when that row
-/// holds neither, so the caller tries the next sheet.
-pub fn parse(grid: &[Vec<Cell>]) -> Result<Option<Workbook>> {
-    let Some(header) = grid.first() else {
+/// Both tables, found by their headers in the first row that has either.
+/// `None` when no row does, so the caller tries the next sheet. `above` is the
+/// number of sheet rows above `grid`'s first, so a row number an error names
+/// is the spreadsheet's own.
+pub fn parse(grid: &[Vec<Cell>], above: usize) -> Result<Option<Workbook>> {
+    let found = grid.iter().enumerate().find_map(|(h, row)| {
+        let (d, l) = (find(row, DONATIONS), find(row, LOTS));
+        (d.is_some() || l.is_some()).then_some((h, d, l))
+    });
+    let Some((h, d, l)) = found else {
         return Ok(None);
     };
-    let (d, l) = match (find(header, DONATIONS), find(header, LOTS)) {
-        (None, None) => return Ok(None),
+    let header = &grid[h];
+    let (d, l) = match (d, l) {
         (Some(d), Some(l)) => (d, l),
-        (None, Some(_)) => bail!(
+        (None, _) => bail!(
             "a lots table but no donations table ({})",
             DONATIONS.join(", ")
         ),
-        (Some(_), None) => bail!("a donations table but no lots table ({})", LOTS.join(", ")),
+        (_, None) => bail!("a donations table but no lots table ({})", LOTS.join(", ")),
     };
     let donation_col = column_after(header, l, "Donation")?;
     let claimed_col = column_after(header, l, "Claimed?")?;
     let mut wb = Workbook::default();
-    for (i, row) in grid.iter().enumerate().skip(1) {
-        let n = i + 1;
-        if let Some(date) = date_at(row, d) {
+    for (i, row) in grid.iter().enumerate().skip(h + 1) {
+        let n = above + i + 1;
+        if let Some(date) = table_date(row, d, &[d + 1, d + 2], n, "donation")? {
             wb.donations.push(WorkbookDonation {
                 row: n,
                 date,
@@ -90,15 +96,23 @@ pub fn parse(grid: &[Vec<Cell>]) -> Result<Option<Workbook>> {
                 gain: number(at(row, d + 5)).map(to_cents),
             });
         }
-        if let Some(bought) = date_at(row, l) {
+        if let Some(bought) = table_date(row, l, &[l + 1, l + 2], n, "lot")? {
             wb.lots.push(WorkbookLot {
                 row: n,
                 bought,
                 ticker: ticker_at(row, l + 1, n)?,
                 shares: shares_at(row, l + 2, n)?,
                 price: cents_at(row, l + 3, n)?,
-                donation: date_at(row, donation_col),
-                claimed: matches!(at(row, claimed_col), Cell::Bool(true)),
+                donation: match at(row, donation_col) {
+                    Cell::Empty => None,
+                    Cell::Date(d) => Some(*d),
+                    _ => bail!("row {n}: the Donation cell is neither empty nor a date"),
+                },
+                claimed: match at(row, claimed_col) {
+                    Cell::Empty => false,
+                    Cell::Bool(b) => *b,
+                    _ => bail!("row {n}: the Claimed? cell is neither empty nor TRUE or FALSE"),
+                },
             });
         }
     }
@@ -200,10 +214,19 @@ fn at(row: &[Cell], c: usize) -> &Cell {
     row.get(c).unwrap_or(&Cell::Empty)
 }
 
-fn date_at(row: &[Cell], c: usize) -> Option<NaiveDate> {
+/// A table row's date, `None` for a row the table is not on. A row with a
+/// ticker or quantity but no date cell would otherwise vanish silently.
+fn table_date(
+    row: &[Cell],
+    c: usize,
+    others: &[usize],
+    n: usize,
+    table: &str,
+) -> Result<Option<NaiveDate>> {
     match at(row, c) {
-        Cell::Date(d) => Some(*d),
-        _ => None,
+        Cell::Date(d) => Ok(Some(*d)),
+        Cell::Empty if others.iter().all(|&o| *at(row, o) == Cell::Empty) => Ok(None),
+        _ => bail!("row {n}: the {table}'s date is not a date"),
     }
 }
 
@@ -328,7 +351,7 @@ mod tests {
 
     #[test]
     fn both_tables_are_read_with_spreadsheet_row_numbers() {
-        let wb = parse(&grid()).unwrap().unwrap();
+        let wb = parse(&grid(), 0).unwrap().unwrap();
         assert_eq!(wb.donations.len(), 1);
         let d = &wb.donations[0];
         assert_eq!(
@@ -343,7 +366,7 @@ mod tests {
 
     #[test]
     fn a_split_lot_merges_back_into_one_and_its_rows_become_one_allocation() {
-        let bulk = assemble(&parse(&grid()).unwrap().unwrap()).unwrap();
+        let bulk = assemble(&parse(&grid(), 0).unwrap().unwrap()).unwrap();
         assert_eq!(bulk.lots.len(), 2);
         assert_eq!(bulk.lots[0].shares, Shares::whole(13));
         assert_eq!(bulk.lots[1].shares, Shares::whole(7));
@@ -360,7 +383,7 @@ mod tests {
             None,
             Some((day(2026, 1, 2), 2.0, 30.0, Some(day(2025, 5, 1)), false)),
         );
-        let err = assemble(&parse(&g).unwrap().unwrap()).unwrap_err();
+        let err = assemble(&parse(&g, 0).unwrap().unwrap()).unwrap_err();
         assert!(
             err.to_string().starts_with("row 4: bought 2026-01-02"),
             "{err}"
@@ -371,7 +394,7 @@ mod tests {
     fn a_donation_whose_lots_do_not_add_up_is_refused() {
         let mut g = grid();
         g.remove(3);
-        let err = assemble(&parse(&g).unwrap().unwrap()).unwrap_err();
+        let err = assemble(&parse(&g, 0).unwrap().unwrap()).unwrap_err();
         assert!(err.to_string().contains("add up to 13.000"), "{err}");
     }
 
@@ -382,15 +405,15 @@ mod tests {
             None,
             Some((day(2021, 1, 2), 5.0, 30.0, Some(day(2025, 6, 1)), false)),
         );
-        let err = assemble(&parse(&g).unwrap().unwrap()).unwrap_err();
+        let err = assemble(&parse(&g, 0).unwrap().unwrap()).unwrap_err();
         assert!(err.to_string().contains("row 5"), "{err}");
     }
 
     #[test]
     fn a_sheet_with_neither_table_is_skipped_and_one_with_half_is_an_error() {
-        assert_eq!(parse(&[vec![text("Something else")]]).unwrap(), None);
+        assert_eq!(parse(&[vec![text("Something else")]], 0).unwrap(), None);
         let half: Vec<Cell> = header().into_iter().take(6).collect();
-        assert!(parse(&[half]).is_err());
+        assert!(parse(&[half], 0).is_err());
     }
 
     #[test]
@@ -406,7 +429,68 @@ mod tests {
                 false,
             )),
         );
-        let wb = parse(&g).unwrap().unwrap();
+        let wb = parse(&g, 0).unwrap().unwrap();
         assert_eq!(wb.lots[1].shares, Shares::whole(3));
+    }
+
+    #[test]
+    fn a_title_row_above_the_header_is_skipped_and_rows_are_numbered_from_the_sheets_top() {
+        let mut g = grid();
+        g.insert(0, vec![text("Cost basis")]);
+        g[4] = row(
+            None,
+            Some((day(2026, 1, 2), 2.0, 30.0, Some(day(2025, 5, 1)), false)),
+        );
+        let err = assemble(&parse(&g, 0).unwrap().unwrap()).unwrap_err();
+        assert!(
+            err.to_string().starts_with("row 5: bought 2026-01-02"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_range_starting_below_the_top_of_the_sheet_offsets_every_row_number() {
+        let mut g = grid();
+        g[3] = row(
+            None,
+            Some((day(2026, 1, 2), 2.0, 30.0, Some(day(2025, 5, 1)), false)),
+        );
+        let err = assemble(&parse(&g, 3).unwrap().unwrap()).unwrap_err();
+        assert!(
+            err.to_string().starts_with("row 7: bought 2026-01-02"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_lot_row_whose_date_is_not_a_date_is_refused_naming_the_row() {
+        let mut g = grid();
+        g[2][7] = text("2020-01-02");
+        let err = parse(&g, 0).unwrap_err();
+        assert!(err.to_string().starts_with("row 3:"), "{err}");
+    }
+
+    #[test]
+    fn a_donation_row_whose_date_is_not_a_date_is_refused_naming_the_row() {
+        let mut g = grid();
+        g[1][0] = text("May 1");
+        let err = parse(&g, 0).unwrap_err();
+        assert!(err.to_string().starts_with("row 2:"), "{err}");
+    }
+
+    #[test]
+    fn a_donation_cell_that_is_neither_empty_nor_a_date_is_refused_naming_the_row() {
+        let mut g = grid();
+        g[4][13] = text("n/a");
+        let err = parse(&g, 0).unwrap_err();
+        assert!(err.to_string().starts_with("row 5:"), "{err}");
+    }
+
+    #[test]
+    fn a_claimed_cell_that_is_neither_empty_nor_a_boolean_is_refused_naming_the_row() {
+        let mut g = grid();
+        g[2][15] = text("yes");
+        let err = parse(&g, 0).unwrap_err();
+        assert!(err.to_string().starts_with("row 3:"), "{err}");
     }
 }

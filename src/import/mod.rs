@@ -25,8 +25,9 @@ pub fn read(path: &Path) -> Result<Workbook> {
         let range = book
             .worksheet_range(&name)
             .with_context(|| format!("reading sheet {name}"))?;
+        let above = range.start().map_or(0, |(row, _)| row as usize);
         let grid: Vec<Vec<Cell>> = range.rows().map(|r| r.iter().map(cell).collect()).collect();
-        if let Some(wb) = table::parse(&grid).with_context(|| format!("sheet {name}"))? {
+        if let Some(wb) = table::parse(&grid, above).with_context(|| format!("sheet {name}"))? {
             return Ok(wb);
         }
     }
@@ -65,5 +66,52 @@ fn cell(data: &Data) -> Cell {
             .and_then(|p| NaiveDate::parse_from_str(p, "%Y-%m-%d").ok())
             .map_or(Cell::Empty, Cell::Date),
         _ => Cell::Empty,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use calamine::{CellErrorType, ExcelDateTime, ExcelDateTimeType};
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn integer_and_float_cells_are_numbers() {
+        assert_eq!(cell(&Data::Int(3)), Cell::Number(3.0));
+        assert_eq!(cell(&Data::Float(2.5)), Cell::Number(2.5));
+    }
+
+    #[test]
+    fn an_error_cell_reads_as_empty() {
+        assert_eq!(cell(&Data::Error(CellErrorType::Value)), Cell::Empty);
+    }
+
+    #[test]
+    fn a_datetime_cell_is_its_calendar_date_without_the_time() {
+        // 45_778.75 is 2025-05-01 at 18:00 in Excel's 1900 system.
+        let dt = ExcelDateTime::new(45_778.75, ExcelDateTimeType::DateTime, false);
+        assert_eq!(cell(&Data::DateTime(dt)), Cell::Date(day(2025, 5, 1)));
+    }
+
+    #[test]
+    fn an_iso_datetime_cell_is_its_date_part() {
+        assert_eq!(
+            cell(&Data::DateTimeIso("2025-05-01T18:00:00".into())),
+            Cell::Date(day(2025, 5, 1))
+        );
+        assert_eq!(cell(&Data::DateTimeIso("soon".into())), Cell::Empty);
+    }
+
+    #[test]
+    fn a_string_cell_is_trimmed_and_a_blank_one_is_empty() {
+        assert_eq!(
+            cell(&Data::String("  TDF45 ".into())),
+            Cell::Text("TDF45".into())
+        );
+        assert_eq!(cell(&Data::String("  ".into())), Cell::Empty);
+        assert_eq!(cell(&Data::Bool(true)), Cell::Bool(true));
     }
 }

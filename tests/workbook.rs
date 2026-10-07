@@ -33,19 +33,23 @@ fn every_donations_gain_matches_the_workbooks_own_figure_to_within_a_cent() {
     import::run(&db, &path, false).unwrap();
     let rows = summary::donations(&db).unwrap();
     assert_eq!(rows.len(), wb.donations.len());
+    let mut compared = 0;
     for d in &wb.donations {
         let Some(expected) = d.gain else { continue };
         let row = rows
             .iter()
             .find(|r| r.donation.date == d.date && r.donation.ticker == d.ticker)
             .unwrap();
+        compared += 1;
         let diff = (row.totals.gain.0 - expected.0).abs();
         assert!(
             diff <= 1,
-            "row {}: gain {} against the workbook's {}",
-            d.row,
-            row.totals.gain,
-            expected
+            "row {}: the gain differs from the workbook's by {diff} cents",
+            d.row
         );
     }
+    assert!(
+        compared > 0,
+        "no donation carried a Capital Gains figure to compare"
+    );
 }
