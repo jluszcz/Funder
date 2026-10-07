@@ -70,7 +70,7 @@ fn notes(r: &DonationRow) -> Vec<String> {
     let mut notes = Vec::new();
     if r.shortfall > Shares::ZERO {
         notes.push(format!(
-            "Short {} shares: no other long-term lot gains at today's price. o picks lots by hand",
+            "Short {} shares: no other long-term lot gains here; o picks by hand",
             r.shortfall
         ));
     }
@@ -125,7 +125,7 @@ pub(super) mod tests {
     use crate::money::Cents;
     use crate::shares::Shares;
     use crate::tui::app::App;
-    use crate::tui::test_support::{day, fixture_db, press, screen, today};
+    use crate::tui::test_support::{day, fixture_db, press, screen, today, type_text};
     use ratatui::crossterm::event::KeyCode;
 
     /// The fixture plus a recorded donation of 4 TDF45 shares for $180 from
@@ -170,5 +170,114 @@ pub(super) mod tests {
         let mut app = crate::tui::test_support::app();
         press(&mut app, KeyCode::Char('2'));
         assert!(screen(&mut app, 80, 20).contains("n plans one"));
+    }
+
+    fn plan(app: &mut App, target: &str) {
+        press(app, KeyCode::Char('n'));
+        type_text(app, target);
+        press(app, KeyCode::Enter);
+    }
+
+    #[test]
+    fn a_shortfall_plans_note_is_fully_visible_at_eighty_columns() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('n'));
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "25");
+        press(&mut app, KeyCode::Enter);
+        let text = screen(&mut app, 80, 24);
+        let note = text.lines().find(|l| l.contains("Short ")).unwrap();
+        assert!(note.contains("o picks by hand"), "{note}");
+        assert!(note.ends_with('│'), "{note}");
+    }
+
+    #[test]
+    fn plans_follow_recorded_donations_with_approximate_value_and_gain() {
+        let mut app = app_with_donation();
+        plan(&mut app, "100");
+        let text = screen(&mut app, 80, 24);
+        let rows: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("TDF45") && l.contains("2026-"))
+            .collect();
+        assert!(
+            rows[0].contains("2026-01-05") && !rows[0].contains('~'),
+            "{rows:?}"
+        );
+        assert!(
+            rows[1].contains("2026-06-01") && rows[1].contains("plan"),
+            "{rows:?}"
+        );
+        assert_eq!(rows[1].matches('~').count(), 2, "{rows:?}");
+    }
+
+    #[test]
+    fn a_short_term_line_is_drawn_red_with_the_legend() {
+        let db = fixture_db();
+        let usm = db.lots().unwrap()[2].id;
+        db.write_donation(
+            None,
+            &DonationInput {
+                ticker: "USM".into(),
+                date: day(2026, 4, 1),
+                shares: Shares::whole(1),
+                value: Some(Cents(10_000)),
+            },
+            &[Pick {
+                lot: usm,
+                shares: Shares::whole(1),
+                manual: true,
+            }],
+        )
+        .unwrap();
+        let mut app = App::new(db, today()).unwrap();
+        press(&mut app, KeyCode::Char('2'));
+        let buf = crate::tui::test_support::draw_buffer(80, 24, |f| app.render(f));
+        let y = (0..buf.area.height)
+            .find(|&y| {
+                let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+                row.contains("2026-03-01") && row.contains("ST")
+            })
+            .expect("the short-term line");
+        let fg = (0..buf.area.width)
+            .map(|x| buf[(x, y)].fg)
+            .collect::<Vec<_>>();
+        assert!(fg.contains(&ratatui::style::Color::Red), "{fg:?}");
+        assert!(screen(&mut app, 80, 24).contains("Red: short-term"));
+    }
+
+    #[test]
+    fn editing_a_donation_changes_its_value_and_gain() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('e'));
+        assert!(screen(&mut app, 80, 24).contains("180.00"));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        app.on_key(crate::tui::test_support::ctrl('u'));
+        type_text(&mut app, "200");
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            app.modal.is_none(),
+            "{:?}",
+            app.status.as_ref().map(|s| &s.text)
+        );
+        let row = &app.donations[0];
+        assert_eq!(row.donation.value, Some(Cents(20_000)));
+        assert_eq!(row.totals.gain, Cents(12_000));
+    }
+
+    #[test]
+    fn a_five_figure_value_stays_inside_the_border() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('e'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        app.on_key(crate::tui::test_support::ctrl('u'));
+        type_text(&mut app, "12345");
+        press(&mut app, KeyCode::Enter);
+        let text = screen(&mut app, 80, 24);
+        let row = text.lines().find(|l| l.contains("2026-01-05")).unwrap();
+        assert!(row.contains("12,345.00"), "{row}");
+        assert!(row.ends_with('│'), "{row}");
     }
 }

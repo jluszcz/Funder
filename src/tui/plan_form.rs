@@ -66,9 +66,10 @@ impl PlanForm {
             let target = self.form.cents(TARGET)?;
             Ok(plan_shares(target, donate::current_price(db, &ticker)?))
         })();
-        if let Ok(shares) = shares {
-            self.form.set(SHARES, shares.to_string());
-        }
+        // Shares derived from a target that no longer prices are cleared, not
+        // left behind for Enter to save.
+        self.form
+            .set(SHARES, shares.map(|s| s.to_string()).unwrap_or_default());
     }
 
     fn refresh(&mut self, db: &Db) {
@@ -114,7 +115,7 @@ impl PlanForm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::test_support::{fixture_db, key, today};
+    use crate::tui::test_support::{ctrl, fixture_db, key, shift, today};
 
     fn type_into(p: &mut PlanForm, db: &Db, text: &str) {
         for c in text.chars() {
@@ -150,5 +151,26 @@ mod tests {
         p.on_key(key(KeyCode::Tab), &db);
         type_into(&mut p, &db, "1");
         assert!(p.notes().join("\n").contains("p on the Lots screen"));
+    }
+
+    #[test]
+    fn clearing_the_target_clears_the_shares_it_had_filled() {
+        let db = fixture_db();
+        let mut p = PlanForm::new(&db, "TDF45", today());
+        type_into(&mut p, &db, "620");
+        p.on_key(ctrl('u'), &db);
+        assert_eq!(p.form.text(SHARES), "");
+        assert!(p.notes().is_empty());
+    }
+
+    #[test]
+    fn switching_to_a_ticker_with_no_price_clears_the_shares_it_had_filled() {
+        let db = fixture_db();
+        let mut p = PlanForm::new(&db, "TDF45", today());
+        type_into(&mut p, &db, "620");
+        p.on_key(shift(KeyCode::BackTab), &db);
+        p.on_key(ctrl('u'), &db);
+        type_into(&mut p, &db, "USM");
+        assert_eq!(p.form.text(SHARES), "");
     }
 }

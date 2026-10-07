@@ -5,7 +5,7 @@ use crate::db::{self, Db, NewLot};
 use crate::money::Cents;
 use crate::shares::Shares;
 use chrono::NaiveDate;
-pub(super) use jluszcz_finance_utils::tui::testing::{ctrl, draw, key, shift};
+pub(super) use jluszcz_finance_utils::tui::testing::{ctrl, draw, draw_buffer, key, shift};
 use ratatui::crossterm::event::KeyCode;
 
 pub(super) fn day(y: i32, m: u32, d: u32) -> NaiveDate {
