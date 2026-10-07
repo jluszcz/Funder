@@ -7,6 +7,8 @@ pub mod config;
 pub mod db;
 pub mod donate;
 pub mod id;
+#[cfg(feature = "import")]
+pub mod import;
 pub mod money;
 pub mod shares;
 pub mod summary;

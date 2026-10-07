@@ -228,8 +228,8 @@ impl Db {
                 .collect::<Result<Vec<_>>>()?;
             for d in &bulk.donations {
                 ensure!(
-                    d.input.value.is_some() || !d.claimed,
-                    "the plan of {} cannot be claimed",
+                    d.input.value.is_some(),
+                    "the donation of {} has no value: a load writes only recorded donations",
                     d.input.date
                 );
                 let picks = d
@@ -666,16 +666,19 @@ mod tests {
     }
 
     #[test]
-    fn an_imported_plan_cannot_be_claimed() {
+    fn a_bulk_load_containing_a_plan_is_refused_and_writes_nothing() {
         let db = open_in_memory().unwrap();
         let mut b = bulk();
         b.donations[0].input.value = None;
+        b.donations[0].claimed = false;
         let err = db.load(&b, false).unwrap_err();
         assert!(
             err.to_string()
-                .contains("plan of 2026-01-05 cannot be claimed"),
+                .contains("donation of 2026-01-05 has no value"),
             "{err}"
         );
+        assert!(db.lots().unwrap().is_empty());
+        assert!(db.donations().unwrap().is_empty());
     }
 
     #[test]

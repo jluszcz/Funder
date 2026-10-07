@@ -13,6 +13,7 @@ funder                      # opens ~/.local/share/funder/funder.db
 funder --db /tmp/demo.db    # a scratch database
 funder --scratch            # a throwaway copy of the default database
 funder backup               # upload the database to S3 if a backup is due
+cargo run --features import -- import <workbook>   # one-time: load the old spreadsheet
 ```
 
 `1` shows the Lots: every purchase, what is left of it, and its gain at the price `p` sets. `a`, `e`,

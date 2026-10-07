@@ -20,6 +20,14 @@ struct Cli {
 enum Command {
     /// Back the database up to S3, if the schedule says one is due.
     Backup(BackupArgs),
+    /// Load the old cost-basis workbook into the database.
+    #[cfg(feature = "import")]
+    Import {
+        /// Clear existing lots and donations first (prices are kept).
+        #[arg(long)]
+        replace: bool,
+        workbook: std::path::PathBuf,
+    },
 }
 
 fn main() -> Result<()> {
@@ -46,6 +54,11 @@ fn main() -> Result<()> {
         // mistyped `--db` would then be uploaded as a backup.
         Some(Command::Backup(args)) => {
             backup::command(&BACKUP, &path, cfg.backup.as_ref(), &args, db::snapshot)?
+        }
+        #[cfg(feature = "import")]
+        Some(Command::Import { replace, workbook }) => {
+            let s = funder::import::run(&db::open(&path)?, &workbook, replace)?;
+            println!("imported {} lots and {} donations", s.lots, s.donations);
         }
     }
 
