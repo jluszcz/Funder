@@ -14,6 +14,9 @@ funder --db /tmp/demo.db    # a scratch database
 funder --scratch            # a throwaway copy of the default database
 ```
 
+`1` shows the Lots: every purchase, what is left of it, and its gain at the price `p` sets. `a`, `e`,
+and `d` add, edit, and delete a lot; `?` lists every key.
+
 ## No real data in the repository
 
 This repository is public and the owner's holdings are not. Nothing committed here carries a real
