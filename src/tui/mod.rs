@@ -1,9 +1,11 @@
 //! The terminal UI. `ratatui` is named only under here.
 
 mod app;
+mod donations;
 mod form;
 mod help;
 mod lots;
+mod plan_form;
 mod text;
 
 #[cfg(test)]

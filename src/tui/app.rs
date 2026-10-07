@@ -1,12 +1,15 @@
 //! `App`: which screen is showing, the status line, and where each key goes.
 
+use super::donations::{self, DonationsView};
 use super::form::{self, Field, Form, Outcome};
 use super::help;
 use super::lots::{self, LotsView};
+use super::plan_form::PlanForm;
 use super::text::is_bare;
 use crate::db::{Db, NewLot};
-use crate::id::LotId;
-use crate::summary::{self, LotRow, Lots};
+use crate::donate;
+use crate::id::{DonationId, LotId};
+use crate::summary::{self, DonationRow, LotRow, Lots};
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
 use jluszcz_finance_utils::tui::help::Entry;
@@ -22,6 +25,7 @@ pub(super) const STATUS_TTL: Duration = Duration::from_secs(4);
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Screen {
     Lots,
+    Donations,
 }
 
 pub(super) enum Modal {
@@ -35,6 +39,12 @@ pub(super) enum Modal {
     },
     /// Waiting for `y`; the question is on the status line.
     DeleteLot(LotId),
+    Plan(PlanForm),
+    Record {
+        form: Form,
+        donation: DonationId,
+    },
+    DeleteDonation(DonationId),
 }
 
 const LOT_BOUGHT: usize = 0;
@@ -54,6 +64,7 @@ pub(super) struct App {
     today: NaiveDate,
     pub(super) screen: Screen,
     pub(super) lots_view: LotsView,
+    pub(super) donations_view: DonationsView,
     pub(super) help: bool,
     pub(super) modal: Option<Modal>,
     pub(super) status: Option<Status>,
@@ -62,22 +73,26 @@ pub(super) struct App {
     status_set: bool,
     quit: bool,
     pub(super) lots: Lots,
+    pub(super) donations: Vec<DonationRow>,
 }
 
 impl App {
     pub(super) fn new(db: Db, today: NaiveDate) -> Result<App> {
         let lots = summary::lots(&db, today)?;
+        let donations = summary::donations(&db)?;
         Ok(App {
             db,
             today,
             screen: Screen::Lots,
             lots_view: LotsView::default(),
+            donations_view: DonationsView::default(),
             help: false,
             modal: None,
             status: None,
             status_set: false,
             quit: false,
             lots,
+            donations,
         })
     }
 
@@ -139,6 +154,11 @@ impl App {
 
     fn reload(&mut self) -> Result<()> {
         self.lots = summary::lots(&self.db, self.today)?;
+        self.donations = summary::donations(&self.db)?;
+        self.donations_view.selected = self
+            .donations_view
+            .selected
+            .min(self.donations.len().saturating_sub(1));
         self.lots_view.selected = self
             .lots_view
             .selected
@@ -164,9 +184,12 @@ impl App {
             return Ok(());
         }
         match key.code {
+            KeyCode::Char('1') => self.screen = Screen::Lots,
+            KeyCode::Char('2') => self.screen = Screen::Donations,
             KeyCode::Char('q') => self.quit = true,
             _ => match self.screen {
                 Screen::Lots => self.lots_key(key)?,
+                Screen::Donations => self.donations_key(key)?,
             },
         }
         Ok(())
@@ -248,6 +271,96 @@ impl App {
         Ok(())
     }
 
+    fn selected_donation(&self) -> Option<&DonationRow> {
+        self.donations.get(self.donations_view.selected)
+    }
+
+    fn donations_key(&mut self, key: KeyEvent) -> Result<()> {
+        let last = self.donations.len().saturating_sub(1);
+        match key.code {
+            KeyCode::Up => {
+                self.donations_view.selected = self.donations_view.selected.saturating_sub(1)
+            }
+            KeyCode::Down => {
+                self.donations_view.selected = (self.donations_view.selected + 1).min(last)
+            }
+            KeyCode::Home => self.donations_view.selected = 0,
+            KeyCode::End => self.donations_view.selected = last,
+            KeyCode::Char('n') => {
+                let ticker = self
+                    .selected_donation()
+                    .map(|r| r.donation.ticker.clone())
+                    .or_else(|| self.lots.tickers.first().map(|t| t.ticker.clone()))
+                    .unwrap_or_default();
+                self.modal = Some(Modal::Plan(PlanForm::new(&self.db, &ticker, self.today)));
+            }
+            KeyCode::Char('r') | KeyCode::Char('e') => {
+                let Some(r) = self.selected_donation() else {
+                    return Ok(());
+                };
+                let d = &r.donation;
+                let recording = key.code == KeyCode::Char('r');
+                ensure!(!recording || d.is_plan(), "already recorded: e edits it");
+                ensure!(recording || !d.is_plan(), "a plan is recorded with r");
+                let (title, date, value) = if recording {
+                    (
+                        format!(" Record the plan of {} ", d.date),
+                        self.today,
+                        String::new(),
+                    )
+                } else {
+                    (
+                        format!(" Edit the donation of {} ", d.date),
+                        d.date,
+                        d.value.map(|v| v.to_string()).unwrap_or_default(),
+                    )
+                };
+                let form = Form::new(
+                    title,
+                    vec![
+                        Field::date("Date", date),
+                        Field::text("Shares", d.shares.to_string()),
+                        Field::text("Value $", value),
+                    ],
+                    self.today,
+                );
+                self.modal = Some(Modal::Record {
+                    form,
+                    donation: d.id,
+                });
+            }
+            KeyCode::Char('c') => {
+                if let Some(r) = self.selected_donation() {
+                    let (id, claimed, date) = (r.donation.id, r.donation.claimed, r.donation.date);
+                    self.db.set_claimed(id, !claimed)?;
+                    self.reload()?;
+                    let verb = if claimed { "unclaimed" } else { "claimed" };
+                    self.info(format!("Marked the donation of {date} {verb}"));
+                }
+            }
+            KeyCode::Char('d') => {
+                if let Some(r) = self.selected_donation() {
+                    let (id, date) = (r.donation.id, r.donation.date);
+                    let what = if r.donation.is_plan() {
+                        "plan"
+                    } else {
+                        "donation"
+                    };
+                    self.modal = Some(Modal::DeleteDonation(id));
+                    self.info(format!("Delete the {what} of {date}? y to confirm"));
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn select_donation(&mut self, id: DonationId) {
+        if let Some(i) = self.donations.iter().position(|r| r.donation.id == id) {
+            self.donations_view.selected = i;
+        }
+    }
+
     /// The modal has been taken out of `self.modal`; put it back to keep it open.
     fn modal_key(&mut self, modal: Modal, key: KeyEvent) -> Result<()> {
         match modal {
@@ -282,6 +395,56 @@ impl App {
                     }
                 }
             },
+            Modal::Plan(mut plan) => match plan.on_key(key, &self.db) {
+                Outcome::Continue => self.modal = Some(Modal::Plan(plan)),
+                Outcome::Cancel => {}
+                Outcome::Submit => {
+                    let saved = plan.parsed().and_then(|(ticker, shares)| {
+                        donate::save_plan(&self.db, &ticker, shares, self.today)
+                            .map(|id| (id, ticker, shares))
+                    });
+                    match saved {
+                        Ok((id, ticker, shares)) => {
+                            self.reload()?;
+                            self.select_donation(id);
+                            self.info(format!("Planned {shares} {ticker} shares"));
+                        }
+                        Err(e) => {
+                            self.modal = Some(Modal::Plan(plan));
+                            return Err(e);
+                        }
+                    }
+                }
+            },
+            Modal::Record { mut form, donation } => match form.on_key(key) {
+                Outcome::Continue => self.modal = Some(Modal::Record { form, donation }),
+                Outcome::Cancel => {}
+                Outcome::Submit => {
+                    let saved = (|| -> Result<NaiveDate> {
+                        let date = form.date(0)?;
+                        donate::record(&self.db, donation, date, form.shares(1)?, form.cents(2)?)?;
+                        Ok(date)
+                    })();
+                    match saved {
+                        Ok(date) => {
+                            self.reload()?;
+                            self.select_donation(donation);
+                            self.info(format!("Recorded the donation of {date}"));
+                        }
+                        Err(e) => {
+                            self.modal = Some(Modal::Record { form, donation });
+                            return Err(e);
+                        }
+                    }
+                }
+            },
+            Modal::DeleteDonation(id) => {
+                if is_yes(key) {
+                    self.db.delete_donation(id)?;
+                    self.reload()?;
+                    self.info("Deleted it, freeing its shares".to_string());
+                }
+            }
             Modal::DeleteLot(id) => {
                 if is_yes(key) {
                     self.db.delete_lot(id)?;
@@ -323,9 +486,16 @@ impl App {
         frame.render_widget(block, body);
         match self.screen {
             Screen::Lots => lots::render(frame, inner, &self.lots_view, &self.lots),
+            Screen::Donations => {
+                donations::render(frame, inner, &self.donations_view, &self.donations)
+            }
         }
-        if let Some(Modal::Lot { form, .. } | Modal::Price { form, .. }) = &self.modal {
-            form::render(frame, body, form, &[]);
+        match &self.modal {
+            Some(
+                Modal::Lot { form, .. } | Modal::Price { form, .. } | Modal::Record { form, .. },
+            ) => form::render(frame, body, form, &[]),
+            Some(Modal::Plan(plan)) => form::render(frame, body, &plan.form, &plan.notes()),
+            Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)) | None => {}
         }
         if self.help {
             help::render(frame, body, &self.help_topics());
@@ -336,6 +506,7 @@ impl App {
     fn title(&self) -> &'static str {
         match self.screen {
             Screen::Lots => " Lots ",
+            Screen::Donations => " Donations ",
         }
     }
 
@@ -352,20 +523,30 @@ impl App {
             return vec![help::HELP];
         }
         match (&self.modal, self.screen) {
-            (Some(Modal::Lot { .. } | Modal::Price { .. }), _) => vec![help::FORM],
-            (Some(Modal::DeleteLot(_)), _) => vec![help::CONFIRM],
+            (
+                Some(
+                    Modal::Lot { .. } | Modal::Price { .. } | Modal::Plan(_) | Modal::Record { .. },
+                ),
+                _,
+            ) => vec![help::FORM],
+            (Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)), _) => vec![help::CONFIRM],
             (None, Screen::Lots) => vec![help::LOTS, help::GLOBAL],
+            (None, Screen::Donations) => vec![help::DONATIONS, help::GLOBAL],
         }
     }
 
     /// The open form's keys first, then the screen's, then the global keys.
     fn help_topics(&self) -> Vec<(&'static str, &'static [Entry])> {
         let mut topics = Vec::new();
-        if matches!(self.modal, Some(Modal::Lot { .. } | Modal::Price { .. })) {
+        if matches!(
+            self.modal,
+            Some(Modal::Lot { .. } | Modal::Price { .. } | Modal::Plan(_) | Modal::Record { .. })
+        ) {
             topics.push(("Form", help::FORM));
         }
         match self.screen {
             Screen::Lots => topics.push(("Lots", help::LOTS)),
+            Screen::Donations => topics.push(("Donations", help::DONATIONS)),
         }
         topics.push(("Everywhere", help::GLOBAL));
         topics
@@ -402,6 +583,7 @@ mod tests {
     use crate::calc::select::Pick;
     use crate::db::DonationInput;
     use crate::shares::Shares;
+    use crate::tui::donations::tests::app_with_donation;
     use crate::tui::test_support::{app, ctrl, day, press, screen, today, type_text};
 
     #[test]
@@ -577,5 +759,103 @@ mod tests {
     fn the_footer_names_the_screens_keys() {
         let text = screen(&mut app(), 80, 20);
         assert!(text.lines().last().unwrap().contains("p price"), "{text}");
+    }
+
+    fn on_donations(mut app: App) -> App {
+        press(&mut app, KeyCode::Char('2'));
+        app
+    }
+
+    #[test]
+    fn planning_from_a_target_saves_a_plan_on_the_highest_gain_lots() {
+        let mut app = on_donations(app());
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "620");
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            app.modal.is_none(),
+            "{:?}",
+            app.status.as_ref().map(|s| &s.text)
+        );
+        let plan = &app.donations[app.donations_view.selected];
+        assert!(plan.donation.is_plan());
+        assert_eq!(plan.donation.shares, Shares::whole(12));
+        assert_eq!(plan.lines[0].lot.bought, day(2021, 1, 10));
+    }
+
+    #[test]
+    fn recording_a_plan_stores_its_date_and_value() {
+        let mut app = on_donations(app());
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "620");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('r'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "624");
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            app.modal.is_none(),
+            "{:?}",
+            app.status.as_ref().map(|s| &s.text)
+        );
+        let d = &app.donations[app.donations_view.selected].donation;
+        assert_eq!(d.value, Some(crate::money::Cents(62_400)));
+        assert_eq!(d.date, today());
+    }
+
+    #[test]
+    fn recording_more_shares_than_eligible_lots_hold_keeps_the_form_open() {
+        let mut app = on_donations(app());
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "500");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('r'));
+        press(&mut app, KeyCode::Tab);
+        app.on_key(ctrl('u'));
+        type_text(&mut app, "25");
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "1250");
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.modal, Some(Modal::Record { .. })));
+        assert!(app.status.as_ref().unwrap().text.contains("shares short"));
+    }
+
+    #[test]
+    fn c_marks_a_recorded_donation_claimed_and_refuses_a_plan() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('c'));
+        assert!(app.donations[0].donation.claimed);
+        press(&mut app, KeyCode::Char('n'));
+        type_text(&mut app, "100");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('c'));
+        assert!(app.status.as_ref().unwrap().error);
+    }
+
+    #[test]
+    fn r_on_a_recorded_donation_points_at_e() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('r'));
+        assert!(app.modal.is_none());
+        assert!(app.status.as_ref().unwrap().text.contains("e edits it"));
+    }
+
+    #[test]
+    fn deleting_a_donation_asks_first_and_frees_its_shares() {
+        let mut app = app_with_donation();
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('y'));
+        assert!(app.donations.is_empty());
+        assert_eq!(app.lots.rows[0].left, Shares::whole(10));
+    }
+
+    #[test]
+    fn one_and_two_switch_between_the_screens() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('2'));
+        assert_eq!(app.screen, Screen::Donations);
+        press(&mut app, KeyCode::Char('1'));
+        assert_eq!(app.screen, Screen::Lots);
     }
 }

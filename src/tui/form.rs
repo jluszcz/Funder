@@ -113,8 +113,7 @@ impl Form {
         self.fields[i].text.value()
     }
 
-    // Replaces a field wholesale; the donation forms prefill from it.
-    #[allow(dead_code)]
+    /// Replaces a field wholesale.
     pub(super) fn set(&mut self, i: usize, value: impl Into<String>) {
         self.fields[i].text.set(value.into());
     }

@@ -5,6 +5,8 @@ pub(super) use jluszcz_finance_utils::tui::help::render_panel as render;
 use jluszcz_finance_utils::tui::help::{Entry, footer_items};
 
 pub(super) const GLOBAL: &[Entry] = &[
+    Entry::shared("1", "screen", "Show the Lots"),
+    Entry::shared("2", "screen", "Show the Donations"),
     Entry::own("?", "help", "Open this panel (F1 too)"),
     Entry::own("q", "quit", "Quit"),
 ];
@@ -26,6 +28,31 @@ pub(super) const LOTS: &[Entry] = &[
         "p",
         "price",
         "Set today's price for the selected lot's ticker",
+    ),
+];
+
+pub(super) const DONATIONS: &[Entry] = &[
+    Entry::hidden("↑/↓", "Select a donation"),
+    Entry::own("n", "plan", "Plan a donation from a dollar target"),
+    Entry::own(
+        "r",
+        "record",
+        "Record the selected plan once the shares have moved",
+    ),
+    Entry::own(
+        "e",
+        "edit",
+        "Edit the selected donation's date, shares, or value",
+    ),
+    Entry::own(
+        "c",
+        "claim",
+        "Mark the selected donation claimed on a tax return, or not",
+    ),
+    Entry::own(
+        "d",
+        "delete",
+        "Delete the selected donation or plan, freeing its shares ('y' confirms)",
     ),
 ];
 
@@ -56,7 +83,7 @@ mod tests {
     use super::*;
     use jluszcz_finance_utils::tui::help::duplicate_keys;
 
-    const ALL: &[&[Entry]] = &[GLOBAL, LOTS, FORM, CONFIRM, HELP];
+    const ALL: &[&[Entry]] = &[GLOBAL, LOTS, DONATIONS, FORM, CONFIRM, HELP];
 
     #[test]
     fn no_table_names_a_key_twice() {
@@ -74,6 +101,19 @@ mod tests {
         for table in ALL {
             let line = footer(&[table, GLOBAL]);
             assert!(line.chars().count() <= 80, "{line}");
+        }
+    }
+
+    #[test]
+    fn the_same_action_uses_the_same_key_on_both_screens() {
+        for (key, word) in [("e", "edit"), ("d", "delete")] {
+            for table in [LOTS, DONATIONS] {
+                let entry = table.iter().find(|e| e.key == key).unwrap();
+                assert_eq!(
+                    entry.label,
+                    jluszcz_finance_utils::tui::help::Label::Own(word)
+                );
+            }
         }
     }
 }
