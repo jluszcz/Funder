@@ -91,7 +91,8 @@ valued at the current price; with no price on record, value and gain are `—`.
 Re-running the selection (recording a plan, or editing a donation's shares) keeps every `manual`
 allocation as-is, subtracts it from `S`, and selects the remainder from the other eligible lots.
 Editing a recorded donation with its shares unchanged keeps every allocation it has, and re-runs
-only if one cannot stand at the new date. Either way, the status line says when the lots changed.
+only if one cannot stand at the new date or value: a lot bought after the date, or a non-`manual`
+allocation whose lot is no longer long-term or no longer gains. `manual` allocations are kept regardless. Either way, the status line says when the lots changed.
 
 **Planning** — given a target dollar amount `T` and current price `P`, the proposed share count is
 `floor(T / P)` whole shares; the owner may change it before saving.

@@ -17,14 +17,15 @@ pub struct Summary {
     pub donations: usize,
 }
 
-/// The first sheet holding both tables.
+/// The first sheet holding both tables. A sheet that cannot be read as a
+/// worksheet (a chart sheet) is skipped like one with no tables.
 pub fn read(path: &Path) -> Result<Workbook> {
     let mut book: Xlsx<_> =
         open_workbook(path).with_context(|| format!("opening workbook {}", path.display()))?;
     for name in book.sheet_names() {
-        let range = book
-            .worksheet_range(&name)
-            .with_context(|| format!("reading sheet {name}"))?;
+        let Ok(range) = book.worksheet_range(&name) else {
+            continue;
+        };
         let above = range.start().map_or(0, |(row, _)| row as usize);
         let grid: Vec<Vec<Cell>> = range.rows().map(|r| r.iter().map(cell).collect()).collect();
         if let Some(wb) = table::parse(&grid, above).with_context(|| format!("sheet {name}"))? {

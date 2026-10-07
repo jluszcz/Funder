@@ -4,7 +4,8 @@
 
 use crate::calc::gain::{self, Part, Totals, Valuation};
 use crate::calc::select::{self, Pick, Selection};
-use crate::db::{Db, DonationInput};
+use crate::calc::term::is_long_term;
+use crate::db::{Allocation, Db, DonationInput};
 use crate::id::{DonationId, LotId};
 use crate::money::Cents;
 use crate::shares::Shares;
@@ -19,18 +20,17 @@ pub fn current_price(db: &Db, ticker: &str) -> Result<Cents> {
         .with_context(|| format!("no price for {ticker} yet: p on the Lots screen sets one"))
 }
 
-/// The allocations of `id` the owner chose by hand: what a re-run keeps.
-pub fn manual_picks(db: &Db, id: DonationId) -> Result<Vec<Pick>> {
-    Ok(db
-        .allocations(id)?
-        .into_iter()
+/// The allocations the owner chose by hand: what a re-run keeps.
+pub fn manual_picks(allocations: &[Allocation]) -> Vec<Pick> {
+    allocations
+        .iter()
         .filter(|a| a.manual)
         .map(|a| Pick {
             lot: a.lot,
             shares: a.shares,
             manual: true,
         })
-        .collect())
+        .collect()
 }
 
 /// Each pick with the price its lot was bought at.
@@ -85,7 +85,8 @@ pub fn save_plan(db: &Db, ticker: &str, shares: Shares, today: NaiveDate) -> Res
 
 /// Record a plan, or re-record a donation, as given, and say whether the
 /// lots it draws on changed. A recorded donation whose shares are unchanged
-/// keeps every lot it had, unless one cannot stand at the new date; otherwise
+/// keeps every lot it had, unless one cannot stand at the new date (bought
+/// after it, or an automatic one no longer long-term or gaining); otherwise
 /// the selection re-runs at the recorded value, keeping manual picks. A
 /// shortfall is refused rather than recorded short.
 pub fn record(
@@ -112,15 +113,26 @@ pub fn record(
                 manual: a.manual,
             })
             .collect();
-        // A refusal (a kept lot bought after the new date) writes nothing,
-        // and the re-run below decides instead.
-        if db.write_donation(Some(id), &input, &kept).is_ok() {
+        // A kept lot bought after the new date cannot stand, and a kept
+        // automatic one must still be long-term and gain at the new value;
+        // otherwise the re-run below decides. Any other refusal is the
+        // edit's own error.
+        let valuation = Valuation::Recorded { value, shares };
+        let mut stands = true;
+        for p in &kept {
+            let lot = db.lot(p.lot)?;
+            stands &= lot.bought <= date
+                && (p.manual
+                    || (is_long_term(lot.bought, date) && valuation.gains_over(lot.price)));
+        }
+        if stands {
+            db.write_donation(Some(id), &input, &kept)?;
             return Ok(false);
         }
     }
     let valuation = Valuation::Recorded { value, shares };
     let candidates = db.candidates(&donation.ticker, Some(id))?;
-    let manual = manual_picks(db, id)?;
+    let manual = manual_picks(&before);
     let selection = select::with_manual(&candidates, &manual, shares, valuation, date);
     ensure!(
         selection.shortfall == Shares::ZERO,
@@ -345,6 +357,45 @@ mod tests {
         let (db, id, [_, _, _, cheaper]) = recorded_then_cheaper_lot();
         let changed = record(&db, id, day(2021, 1, 5), Shares::whole(5), Cents(5 * 5_000)).unwrap();
         assert!(changed);
+        assert_eq!(lots_of(&db, id), [(cheaper, Shares::whole(5))]);
+    }
+
+    #[test]
+    fn an_unchanged_edit_to_a_date_before_its_lot_turns_long_term_reruns_the_selection() {
+        let db = open_in_memory().unwrap();
+        let lot = |bought, price| {
+            db.insert_lot(&NewLot {
+                ticker: "TDF45".into(),
+                bought,
+                shares: Shares::whole(10),
+                price: Cents(price),
+            })
+            .unwrap()
+        };
+        let young = lot(day(2024, 3, 1), 2_000);
+        db.set_price("TDF45", today(), Cents(5_000)).unwrap();
+        let id = save_plan(&db, "TDF45", Shares::whole(5), today()).unwrap();
+        record(&db, id, day(2025, 6, 1), Shares::whole(5), Cents(5 * 5_000)).unwrap();
+        assert_eq!(lots_of(&db, id), [(young, Shares::whole(5))]);
+        let old = lot(day(2020, 1, 10), 1_000);
+        let changed = record(
+            &db,
+            id,
+            day(2025, 1, 15),
+            Shares::whole(5),
+            Cents(5 * 5_000),
+        )
+        .unwrap();
+        assert!(changed);
+        assert_eq!(lots_of(&db, id), [(old, Shares::whole(5))]);
+    }
+
+    #[test]
+    fn an_unchanged_edit_to_a_value_its_lot_no_longer_gains_at_reruns_the_selection() {
+        let (db, id, [_, b, _, cheaper]) = recorded_then_cheaper_lot();
+        let changed = record(&db, id, today(), Shares::whole(5), Cents(5 * 1_500)).unwrap();
+        assert!(changed);
+        assert_ne!(lots_of(&db, id), [(b, Shares::whole(5))]);
         assert_eq!(lots_of(&db, id), [(cheaper, Shares::whole(5))]);
     }
 

@@ -96,18 +96,30 @@ impl OverrideForm {
             _ => {
                 if let Some(row) = self.rows.get_mut(self.selected) {
                     match key.code {
-                        KeyCode::Left if is_bare(key) => row.text.step(-1),
-                        KeyCode::Right if is_bare(key) => row.text.step(1),
+                        KeyCode::Left if is_bare(key) => {
+                            row.text.step(-1);
+                            self.fresh = false;
+                        }
+                        KeyCode::Right if is_bare(key) => {
+                            row.text.step(1);
+                            self.fresh = false;
+                        }
                         _ => {
                             if self.fresh && matches!(key.code, KeyCode::Char(_)) && is_bare(key) {
                                 row.text.clear();
                             }
-                            if edit_key(&mut row.text, key) == Edit::Changed {
-                                row.manual = true;
+                            // A key the buffer ignores leaves the row as it
+                            // was, so the next character still replaces it.
+                            match edit_key(&mut row.text, key) {
+                                Edit::Changed => {
+                                    row.manual = true;
+                                    self.fresh = false;
+                                }
+                                Edit::Moved => self.fresh = false,
+                                Edit::Ignored => {}
                             }
                         }
                     }
-                    self.fresh = false;
                 }
             }
         }
@@ -307,6 +319,17 @@ mod tests {
         let mut o = OverrideForm::open(&db, id).unwrap();
         type_into(&mut o, &db, "7");
         assert_eq!(o.rows[0].text.value(), "7");
+    }
+
+    #[test]
+    fn a_key_the_buffer_ignores_does_not_stop_the_next_digit_replacing_the_shares() {
+        let db = fixture_db();
+        let id = plan(&db, 12);
+        let mut o = OverrideForm::open(&db, id).unwrap();
+        o.on_key(key(KeyCode::Tab), &db).unwrap();
+        o.on_key(key(KeyCode::F(2)), &db).unwrap();
+        type_into(&mut o, &db, "5");
+        assert_eq!(o.rows[0].text.value(), "5");
     }
 
     #[test]

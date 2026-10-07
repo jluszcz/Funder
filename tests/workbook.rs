@@ -30,7 +30,8 @@ fn every_donations_gain_matches_the_workbooks_own_figure_to_within_a_cent() {
     let Some(path) = workbook() else { return };
     let wb = import::read(&path).unwrap();
     let db = db::open_in_memory().unwrap();
-    import::run(&db, &path, false).unwrap();
+    db.load(&import::table::assemble(&wb).unwrap(), false)
+        .unwrap();
     let rows = summary::donations(&db).unwrap();
     assert_eq!(rows.len(), wb.donations.len());
     let mut compared = 0;

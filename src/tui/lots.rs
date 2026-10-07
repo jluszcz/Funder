@@ -97,7 +97,6 @@ fn ticker_line(t: &TickerSummary, width: usize) -> String {
     [
         format!("{head}{date}{left}{rest}"),
         format!("{head}{left}{rest}"),
-        format!("{head}{rest}"),
     ]
     .into_iter()
     .find(|line| line.chars().count() <= width)

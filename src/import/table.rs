@@ -238,7 +238,7 @@ fn number(cell: &Cell) -> Option<f64> {
 }
 
 /// The workbook's amounts are exact to the cent, so rounding at two places is
-/// lossless; this and `shares_at` are the crate's only floats.
+/// lossless.
 fn to_cents(f: f64) -> Cents {
     Cents((f * 100.0).round() as i64)
 }
@@ -259,6 +259,12 @@ fn shares_at(row: &[Cell], c: usize, n: usize) -> Result<Shares> {
 fn cents_at(row: &[Cell], c: usize, n: usize) -> Result<Cents> {
     let f = number(at(row, c)).with_context(|| format!("row {n}: no amount"))?;
     ensure!(f > 0.0, "row {n}: an amount must be more than zero");
+    // Float noise is tolerated; a fraction of a cent is a figure this model
+    // cannot hold, so it is refused rather than rounded away.
+    ensure!(
+        (f * 100.0 - (f * 100.0).round()).abs() <= 1e-6,
+        "row {n}: an amount must be a whole number of cents, not {f}"
+    );
     Ok(to_cents(f))
 }
 
@@ -388,6 +394,24 @@ mod tests {
             err.to_string().starts_with("row 4: bought 2026-01-02"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn an_amount_that_is_not_a_whole_number_of_cents_is_refused_naming_the_row() {
+        let mut g = grid();
+        g[3] = row(None, Some((day(2025, 1, 2), 2.0, 45.1234, None, false)));
+        let err = parse(&g, 0).unwrap_err();
+        assert!(err.to_string().starts_with("row 4:"), "{err}");
+        assert!(err.to_string().contains("45.1234"), "{err}");
+    }
+
+    #[test]
+    fn an_amount_with_float_noise_still_rounds_to_the_cent() {
+        let mut g = grid();
+        g[3] = row(None, Some((day(2025, 1, 2), 2.0, 0.1 + 0.2, None, false)));
+        let wb = parse(&g, 0).unwrap().unwrap();
+        let lot = wb.lots.iter().find(|l| l.row == 4).unwrap();
+        assert_eq!(lot.price, Cents(30));
     }
 
     #[test]
