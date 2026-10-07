@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in `/Users/jacob/Documents/Programs/finance-utils`. One branch per task: `git switch -c <branch> origin/main`.
+- Work in the finance-utils checkout, `../finance-utils` from this repository. One branch per task: `git switch -c <branch> origin/main`.
 - `#![warn(missing_docs)]` and CI's `-D warnings`: every `pub` item gets a doc comment saying the *why* a caller cannot infer.
 - Features are default-off and additive. Nothing here names Paychecker, MisterManager, or Funder.
 - `rusqlite` is never a dependency. `serde`/`toml` only in `src/config.rs` and `src/backup/state.rs`.
@@ -46,7 +46,7 @@
 - [ ] **Step 1: Branch**
 
 ```bash
-cd /Users/jacob/Documents/Programs/finance-utils && git fetch && git switch -c tui-date-step origin/main
+cd ../finance-utils && git fetch && git switch -c tui-date-step origin/main
 ```
 
 - [ ] **Step 2: Write the failing tests** — append inside `mod tests` in `src/tui/date.rs`:
