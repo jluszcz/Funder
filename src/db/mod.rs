@@ -10,7 +10,7 @@ pub use donation::{Allocation, Bulk, BulkDonation, Donation, DonationInput};
 pub use lot::{Lot, NewLot};
 pub use price::Price;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use jluszcz_finance_utils::sqlite;
 pub use jluszcz_finance_utils::sqlite::snapshot;
 use rusqlite::Connection;
@@ -39,8 +39,7 @@ impl Db {
 
 /// `~/.local/share/funder/funder.db`.
 pub fn default_path() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    Ok(PathBuf::from(home).join(".local/share/funder/funder.db"))
+    jluszcz_finance_utils::config::data_path(crate::APP, "funder.db")
 }
 
 /// Open (creating if needed) the database at `path`, creating its parent
