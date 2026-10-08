@@ -1,4 +1,4 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use funder::{APP, BACKUP, config, db, tui};
 use jluszcz_finance_utils::backup::cli::{self as backup, BackupArgs};
@@ -33,11 +33,8 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
-    // Refused before the copy is made: a throwaway copy has nothing worth
-    // restoring, and an upload of one would sit beside the real backups
-    // looking like one.
-    if cli.common.scratch && is_explicit_backup {
-        bail!("--scratch cannot be backed up: drop the flag to back up the real database");
+    if is_explicit_backup {
+        cli.common.refuse_scratch_backup()?;
     }
     // Before the TUI opens: a config that does not parse should say so on a
     // terminal in its normal mode, not after a session's work.
@@ -62,11 +59,9 @@ fn main() -> Result<()> {
         }
     }
 
-    // The state file records when an upload last happened, not what was
-    // uploaded, so a `--db` or `--scratch` run on the schedule would take the
-    // real database's turn. An explicit `funder backup` uploads what it is given.
-    if !is_explicit_backup && cli.common.is_default_db() {
-        backup::scheduled(&BACKUP, &path, cfg.backup.as_ref(), db::snapshot);
+    if !is_explicit_backup {
+        cli.common
+            .scheduled_backup(&BACKUP, &path, cfg.backup.as_ref(), db::snapshot);
     }
     Ok(())
 }
