@@ -183,6 +183,7 @@ pub(super) mod tests {
     use crate::shares::Shares;
     use crate::tui::app::App;
     use crate::tui::test_support::{day, fixture_db, press, screen, today, type_text};
+    use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
     /// The fixture plus a recorded donation of 4 TDF45 shares for $180 from

@@ -102,31 +102,6 @@ impl App {
         Ok(app)
     }
 
-    pub(super) fn should_quit(&self) -> bool {
-        self.quit
-    }
-
-    /// With no modal open, the status line lasts until the next key or
-    /// `STATUS_TTL`. With one open, it lasts until the modal closes, so an
-    /// error stays in view while the form is being fixed.
-    pub(super) fn on_key(&mut self, key: KeyEvent) {
-        let had_modal = self.modal.is_some();
-        if !had_modal {
-            self.status = None;
-        }
-        self.status_set = false;
-        if let Err(e) = self.dispatch(key) {
-            self.error(format!("{e:#}"));
-        }
-        if had_modal && self.modal.is_none() && !self.status_set {
-            self.status = None;
-        }
-    }
-
-    pub(super) fn expire_status(&mut self) -> bool {
-        self.expire_status_at(Instant::now())
-    }
-
     /// Drop a status message whose time is up, and say whether one went.
     pub(super) fn expire_status_at(&mut self, now: Instant) -> bool {
         let expired = self
@@ -550,32 +525,6 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn render(&mut self, frame: &mut Frame) {
-        let [body, footer] =
-            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-        let block = Block::bordered().title(self.title());
-        let inner = block.inner(body);
-        frame.render_widget(block, body);
-        match self.screen {
-            Screen::Lots => lots::render(frame, inner, &self.lots_view, &self.lots),
-            Screen::Donations => {
-                donations::render(frame, inner, &self.donations_view, &self.donations)
-            }
-        }
-        match &self.modal {
-            Some(
-                Modal::Lot { form, .. } | Modal::Price { form, .. } | Modal::Record { form, .. },
-            ) => form::render(frame, body, form, &[]),
-            Some(Modal::Plan(plan)) => form::render(frame, body, &plan.form, &plan.notes()),
-            Some(Modal::Override(o)) => override_form::render(frame, body, o),
-            Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)) | None => {}
-        }
-        if self.help {
-            help::render(frame, body, &self.help_topics());
-        }
-        frame.render_widget(self.footer(), footer);
-    }
-
     fn title(&self) -> &'static str {
         match self.screen {
             Screen::Lots => " Lots ",
@@ -630,6 +579,59 @@ impl App {
     }
 }
 
+impl jluszcz_finance_utils::tui::app::App for App {
+    fn should_quit(&self) -> bool {
+        self.quit
+    }
+
+    /// With no modal open, the status line lasts until the next key or
+    /// `STATUS_TTL`. With one open, it lasts until the modal closes, so an
+    /// error stays in view while the form is being fixed.
+    fn on_key(&mut self, key: KeyEvent) {
+        let had_modal = self.modal.is_some();
+        if !had_modal {
+            self.status = None;
+        }
+        self.status_set = false;
+        if let Err(e) = self.dispatch(key) {
+            self.error(format!("{e:#}"));
+        }
+        if had_modal && self.modal.is_none() && !self.status_set {
+            self.status = None;
+        }
+    }
+
+    fn expire_status(&mut self) -> bool {
+        self.expire_status_at(Instant::now())
+    }
+
+    fn render(&mut self, frame: &mut Frame) {
+        let [body, footer] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
+        let block = Block::bordered().title(self.title());
+        let inner = block.inner(body);
+        frame.render_widget(block, body);
+        match self.screen {
+            Screen::Lots => lots::render(frame, inner, &self.lots_view, &self.lots),
+            Screen::Donations => {
+                donations::render(frame, inner, &self.donations_view, &self.donations)
+            }
+        }
+        match &self.modal {
+            Some(
+                Modal::Lot { form, .. } | Modal::Price { form, .. } | Modal::Record { form, .. },
+            ) => form::render(frame, body, form, &[]),
+            Some(Modal::Plan(plan)) => form::render(frame, body, &plan.form, &plan.notes()),
+            Some(Modal::Override(o)) => override_form::render(frame, body, o),
+            Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)) | None => {}
+        }
+        if self.help {
+            help::render(frame, body, &self.help_topics());
+        }
+        frame.render_widget(self.footer(), footer);
+    }
+}
+
 fn lot_form(
     title: &str,
     bought: NaiveDate,
@@ -661,6 +663,7 @@ mod tests {
     use crate::db::DonationInput;
     use crate::tui::donations::tests::app_with_donation;
     use crate::tui::test_support::{app, ctrl, day, press, screen, today, type_text};
+    use jluszcz_finance_utils::tui::app::App as _;
 
     /// The fixture with all ten shares of the 2020 TDF45 lot donated.
     fn app_with_a_lot_used_up() -> App {
