@@ -31,7 +31,7 @@ enum Command {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli: Cli = jluszcz_finance_utils::cli::parse(APP, db::FILE_NAME, false);
     let is_explicit_backup = matches!(cli.command, Some(Command::Backup(_)));
     if is_explicit_backup {
         cli.common.refuse_scratch_backup()?;

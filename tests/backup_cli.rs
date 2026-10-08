@@ -54,3 +54,26 @@ fn a_scratch_copy_cannot_be_backed_up() {
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("--scratch cannot be backed up"));
 }
+
+#[test]
+fn the_help_names_the_default_database_and_config_paths() {
+    let output = Command::new(env!("CARGO_BIN_EXE_funder"))
+        .arg("--help")
+        .output()
+        .unwrap();
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(help.contains("~/.local/share/funder/funder.db"), "{help}");
+    assert!(help.contains("~/.config/funder/config.toml"), "{help}");
+}
+
+/// Parsing goes through `cli::parse` rather than `Cli::parse()`, and a bad
+/// value must still be clap's usage error with clap's exit code.
+#[test]
+fn a_today_that_is_not_a_date_is_a_usage_error() {
+    let output = Command::new(env!("CARGO_BIN_EXE_funder"))
+        .args(["--today", "not-a-date", "backup", "--status"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("invalid value"));
+}
