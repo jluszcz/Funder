@@ -9,6 +9,7 @@ use crate::ticker;
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use jluszcz_finance_utils::tui::date::{self, Step, iso};
+use jluszcz_finance_utils::tui::step_index;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
@@ -92,10 +93,8 @@ impl Form {
         if field.kind == Kind::Date
             && let Some(step) = Step::from_key(key)
         {
-            if let Ok(d) = date::parse(field.text.value(), today)
-                && let Some(next) = step.apply(d)
-            {
-                field.text.set(iso(next));
+            if let Some(next) = date::stepped(field.text.value(), today, step) {
+                field.text.set(next);
             }
             return Outcome::Continue;
         }
@@ -140,17 +139,16 @@ impl Form {
 
     fn move_focus(&mut self, by: isize) {
         self.normalize();
-        let stops = self.fields.len() as isize;
-        self.focus = (self.focus as isize + by).rem_euclid(stops) as usize;
+        self.focus = step_index(self.focus, self.fields.len(), by);
     }
 
     /// Show each date in ISO form once it parses; leave text that does not.
     fn normalize(&mut self) {
         for f in &mut self.fields {
             if f.kind == Kind::Date
-                && let Ok(d) = date::parse(f.text.value(), self.today)
+                && let Some(text) = date::normalized(f.text.value(), self.today)
             {
-                f.text.set(iso(d));
+                f.text.set(text);
             }
         }
     }
