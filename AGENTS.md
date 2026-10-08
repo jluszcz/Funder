@@ -21,7 +21,6 @@ Funder tracks the cost basis of appreciated shares donated to a donor-advised fu
 are recorded whole; each donation draws on lots, and the shares it takes from each are rows of
 their own, so a lot is never split by hand. It borrows its stack and conventions from Paychecker
 and MisterManager; what the three share lives in `jluszcz_finance_utils` (`../finance-utils`).
-The design is `docs/superpowers/specs/2026-10-07-funder-design.md`.
 
 ## No real data in the repository
 
@@ -47,7 +46,7 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | `src/money.rs` | `Cents`, re-exported from finance-utils. |
 | `src/shares.rs` | `Shares(i64)`, thousandths of a share, and `round_div`, the one rounding rule (half away from zero, saturating). |
 | `src/calc/` | Pure arithmetic: `term` (long-term is more than a year), `gain` (`Valuation`, per-lot `Line`s, a donation's `Totals` with the basis rounded once), `select` (highest long-term gain first, manual picks kept), `plan_shares`. No database. |
-| `src/db/` | Schema and queries, one module per table; the only place `rusqlite` is named. `Db` holds a private `Connection`. Multi-statement writes go through `Db::transaction`, which is not reentrant. A `get` by id errors when the row is gone. `donation::write_donation` is the only writer of `allocation`, and enforces the spec's invariants 1–3; `lot::check_editable` enforces invariant 4. |
+| `src/db/` | Schema and queries, one module per table; the only place `rusqlite` is named. `Db` holds a private `Connection`. Multi-statement writes go through `Db::transaction`, which is not reentrant. A `get` by id errors when the row is gone. `donation::write_donation` is the only writer of `allocation`, and enforces the allocation invariants 1–3 below; `lot::check_editable` enforces invariant 4. |
 | `src/db/migration.rs` | The frozen `schema.sql` baseline and the arm chain above it; a schema change is an appended arm. |
 | `src/id.rs` | `LotId`, `DonationId`: one id type per table. |
 | `src/ticker.rs` | `normalize`: a ticker as stored, trimmed and upper-case. |
@@ -64,6 +63,14 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
   donation's do; it may fall short of its shares, a recorded donation may not.
 - **Allocations are written only by `db::donation::write_donation`**, which replaces a donation's
   allocations wholesale inside a transaction. Nothing else inserts into `allocation`.
+- **Allocation invariants**, enforced in `db` writers with schema `CHECK`s and foreign keys as
+  backstop:
+  1. An allocation's lot has the donation's ticker and was bought on or before the donation's date.
+  2. The sum of a lot's allocations never exceeds its shares.
+  3. A recorded donation's allocations sum exactly to its shares; a plan's may fall short.
+  4. A lot with allocations cannot be deleted, nor edited below its allocated shares or to a ticker
+     or date that breaks (1).
+  5. Deleting a donation deletes its allocations, freeing the shares.
 - **`manual` allocations survive a re-run of the selection** (`calc::select::with_manual`); every
   imported allocation is manual.
 
