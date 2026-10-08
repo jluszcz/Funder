@@ -339,7 +339,7 @@ pub(super) mod tests {
         assert!(
             app.modal.is_none(),
             "{:?}",
-            app.status.as_ref().map(|s| &s.text)
+            app.status.message().map(|s| &s.text)
         );
         let row = &app.donations[0];
         assert_eq!(row.donation.value, Some(Cents(20_000)));
