@@ -32,7 +32,7 @@ const SELECT_LOT: &str = "SELECT id, ticker, bought, shares, price FROM lot";
 
 fn from_row(row: &Row) -> rusqlite::Result<Lot> {
     Ok(Lot {
-        id: LotId(row.get(0)?),
+        id: row.get(0)?,
         ticker: row.get(1)?,
         bought: row.get(2)?,
         shares: Shares(row.get(3)?),
@@ -99,7 +99,7 @@ impl Db {
             .conn
             .prepare("SELECT lot_id, SUM(shares) FROM allocation GROUP BY lot_id")?;
         let rows = stmt
-            .query_map([], |r| Ok((LotId(r.get(0)?), Shares(r.get(1)?))))?
+            .query_map([], |r| Ok((r.get(0)?, Shares(r.get(1)?))))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
