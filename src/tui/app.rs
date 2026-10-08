@@ -15,14 +15,12 @@ use crate::summary::{self, DonationRow, LotRow, Lots};
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
 use jluszcz_finance_utils::tui::help::Entry;
+use jluszcz_finance_utils::tui::status::StatusLine;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Paragraph};
-use std::time::{Duration, Instant};
-
-pub(super) const STATUS_TTL: Duration = Duration::from_secs(4);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(super) enum Screen {
@@ -55,13 +53,6 @@ const LOT_TICKER: usize = 1;
 const LOT_SHARES: usize = 2;
 const LOT_PRICE: usize = 3;
 
-#[derive(Debug)]
-pub(super) struct Status {
-    pub(super) text: String,
-    pub(super) error: bool,
-    expires: Option<Instant>,
-}
-
 pub(super) struct App {
     pub(super) db: Db,
     today: NaiveDate,
@@ -70,10 +61,7 @@ pub(super) struct App {
     pub(super) donations_view: DonationsView,
     pub(super) help: bool,
     pub(super) modal: Option<Modal>,
-    pub(super) status: Option<Status>,
-    /// Whether the key being handled set the status line. Closing a modal
-    /// clears a status message the closing key did not set.
-    status_set: bool,
+    pub(super) status: StatusLine,
     quit: bool,
     pub(super) lots: Lots,
     pub(super) donations: Vec<DonationRow>,
@@ -89,8 +77,7 @@ impl App {
             donations_view: DonationsView::default(),
             help: false,
             modal: None,
-            status: None,
-            status_set: false,
+            status: StatusLine::default(),
             quit: false,
             lots: Lots {
                 rows: Vec::new(),
@@ -102,35 +89,12 @@ impl App {
         Ok(app)
     }
 
-    /// Drop a status message whose time is up, and say whether one went.
-    pub(super) fn expire_status_at(&mut self, now: Instant) -> bool {
-        let expired = self
-            .status
-            .as_ref()
-            .and_then(|s| s.expires)
-            .is_some_and(|at| now >= at);
-        if expired {
-            self.status = None;
-        }
-        expired
-    }
-
     pub(super) fn info(&mut self, text: String) {
-        self.set_status(text, false);
+        self.status.info(text, self.modal.is_some());
     }
 
     fn error(&mut self, text: String) {
-        self.set_status(text, true);
-    }
-
-    fn set_status(&mut self, text: String, error: bool) {
-        let expires = self.modal.is_none().then(|| Instant::now() + STATUS_TTL);
-        self.status = Some(Status {
-            text,
-            error,
-            expires,
-        });
-        self.status_set = true;
+        self.status.error(text, self.modal.is_some());
     }
 
     fn reload(&mut self) -> Result<()> {
@@ -533,7 +497,7 @@ impl App {
     }
 
     fn footer(&self) -> Paragraph<'static> {
-        match &self.status {
+        match self.status.message() {
             Some(s) if s.error => Paragraph::new(s.text.clone()).style(Style::new().fg(Color::Red)),
             Some(s) => Paragraph::new(s.text.clone()),
             None => Paragraph::new(help::footer(&self.footer_tables())),
@@ -585,24 +549,19 @@ impl jluszcz_finance_utils::tui::app::App for App {
     }
 
     /// With no modal open, the status line lasts until the next key or
-    /// `STATUS_TTL`. With one open, it lasts until the modal closes, so an
+    /// `status::TTL`. With one open, it lasts until the modal closes, so an
     /// error stays in view while the form is being fixed.
     fn on_key(&mut self, key: KeyEvent) {
         let had_modal = self.modal.is_some();
-        if !had_modal {
-            self.status = None;
-        }
-        self.status_set = false;
+        self.status.begin_key(had_modal);
         if let Err(e) = self.dispatch(key) {
             self.error(format!("{e:#}"));
         }
-        if had_modal && self.modal.is_none() && !self.status_set {
-            self.status = None;
-        }
+        self.status.end_key(had_modal, self.modal.is_some());
     }
 
     fn expire_status(&mut self) -> bool {
-        self.expire_status_at(Instant::now())
+        self.status.expire()
     }
 
     fn render(&mut self, frame: &mut Frame) {
@@ -664,6 +623,7 @@ mod tests {
     use crate::tui::donations::tests::app_with_donation;
     use crate::tui::test_support::{app, ctrl, day, press, screen, today, type_text};
     use jluszcz_finance_utils::tui::app::App as _;
+    use jluszcz_finance_utils::tui::status;
 
     /// The fixture with all ten shares of the 2020 TDF45 lot donated.
     fn app_with_a_lot_used_up() -> App {
@@ -773,7 +733,7 @@ mod tests {
         assert!(
             app.modal.is_none(),
             "{:?}",
-            app.status.as_ref().map(|s| &s.text)
+            app.status.message().map(|s| &s.text)
         );
         let saved = app
             .lots
@@ -818,7 +778,7 @@ mod tests {
         type_text(&mut app, "10");
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.modal, Some(Modal::Lot { .. })));
-        let status = app.status.as_ref().unwrap();
+        let status = app.status.message().unwrap();
         assert!(
             status.error && status.text.contains("Shares"),
             "{}",
@@ -867,7 +827,7 @@ mod tests {
     fn deleting_a_lot_asks_first_and_y_deletes_it() {
         let mut app = app();
         press(&mut app, KeyCode::Char('d'));
-        assert!(app.status.as_ref().unwrap().text.contains("y to confirm"));
+        assert!(app.status.message().unwrap().text.contains("y to confirm"));
         assert_eq!(app.lots.rows.len(), 3);
         press(&mut app, KeyCode::Char('y'));
         assert_eq!(app.lots.rows.len(), 2);
@@ -903,7 +863,7 @@ mod tests {
             .unwrap();
         press(&mut app, KeyCode::Char('d'));
         assert!(app.modal.is_none());
-        let status = app.status.as_ref().unwrap();
+        let status = app.status.message().unwrap();
         assert!(
             status.error && status.text.contains("the donation of 2026-01-05"),
             "{}",
@@ -924,9 +884,9 @@ mod tests {
     fn a_status_message_expires_after_its_time() {
         let mut app = app();
         app.info("hello".into());
-        let later = std::time::Instant::now() + STATUS_TTL;
-        assert!(app.expire_status_at(later));
-        assert!(app.status.is_none());
+        let later = std::time::Instant::now() + status::TTL;
+        assert!(app.status.expire_at(later));
+        assert!(app.status.message().is_none());
     }
 
     #[test]
@@ -949,7 +909,7 @@ mod tests {
         assert!(
             app.modal.is_none(),
             "{:?}",
-            app.status.as_ref().map(|s| &s.text)
+            app.status.message().map(|s| &s.text)
         );
         let plan = &app.donations[app.donations_view.selected];
         assert!(plan.donation.is_plan());
@@ -971,7 +931,7 @@ mod tests {
         assert!(
             app.modal.is_none(),
             "{:?}",
-            app.status.as_ref().map(|s| &s.text)
+            app.status.message().map(|s| &s.text)
         );
         let d = &app.donations[app.donations_view.selected].donation;
         assert_eq!(d.value, Some(crate::money::Cents(62_400)));
@@ -992,7 +952,7 @@ mod tests {
         type_text(&mut app, "1250");
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.modal, Some(Modal::Record { .. })));
-        assert!(app.status.as_ref().unwrap().text.contains("shares short"));
+        assert!(app.status.message().unwrap().text.contains("shares short"));
     }
 
     fn add_cheaper_lot(app: &mut App) {
@@ -1018,7 +978,7 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         type_text(&mut app, "100");
         press(&mut app, KeyCode::Enter);
-        let text = &app.status.as_ref().unwrap().text;
+        let text = &app.status.message().unwrap().text;
         assert_eq!(
             text,
             "Recorded the donation of 2026-06-01 — lots changed from the plan"
@@ -1036,7 +996,7 @@ mod tests {
         type_text(&mut app, "200");
         press(&mut app, KeyCode::Enter);
         assert_eq!(
-            app.status.as_ref().unwrap().text,
+            app.status.message().unwrap().text,
             "Recorded the donation of 2026-01-05"
         );
         let lines = &app.donations[app.donations_view.selected].lines;
@@ -1056,7 +1016,7 @@ mod tests {
         type_text(&mut app, "225");
         press(&mut app, KeyCode::Enter);
         assert_eq!(
-            app.status.as_ref().unwrap().text,
+            app.status.message().unwrap().text,
             "Recorded the donation of 2026-01-05 — lots changed"
         );
     }
@@ -1070,7 +1030,7 @@ mod tests {
         type_text(&mut app, "100");
         press(&mut app, KeyCode::Enter);
         press(&mut app, KeyCode::Char('c'));
-        assert!(app.status.as_ref().unwrap().error);
+        assert!(app.status.message().unwrap().error);
     }
 
     #[test]
@@ -1078,7 +1038,7 @@ mod tests {
         let mut app = app_with_donation();
         press(&mut app, KeyCode::Char('r'));
         assert!(app.modal.is_none());
-        assert!(app.status.as_ref().unwrap().text.contains("e edits it"));
+        assert!(app.status.message().unwrap().text.contains("e edits it"));
     }
 
     #[test]
@@ -1113,7 +1073,7 @@ mod tests {
         assert!(
             app.modal.is_none(),
             "{:?}",
-            app.status.as_ref().map(|s| &s.text)
+            app.status.message().map(|s| &s.text)
         );
         press(&mut app, KeyCode::Char('r'));
         press(&mut app, KeyCode::Tab);
@@ -1134,7 +1094,7 @@ mod tests {
         type_text(&mut app, "3");
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.modal, Some(Modal::Override(_))));
-        assert!(app.status.as_ref().unwrap().text.contains("not the 4.000"));
+        assert!(app.status.message().unwrap().text.contains("not the 4.000"));
     }
 
     #[test]
@@ -1148,6 +1108,6 @@ mod tests {
         type_text(&mut app, "3");
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.modal, Some(Modal::Override(_))));
-        assert!(app.status.as_ref().unwrap().error);
+        assert!(app.status.message().unwrap().error);
     }
 }
