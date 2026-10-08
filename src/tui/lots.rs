@@ -1,7 +1,7 @@
 //! The Lots screen: every lot, what is left of it, and each ticker's totals.
 
 use super::table::{self, Column};
-use crate::money::{Cents, usd, usd_whole};
+use crate::money::Cents;
 use crate::summary::{LotRow, Lots, TickerSummary};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -31,7 +31,7 @@ fn hidden_note(view: &LotsView) -> Option<String> {
 
 /// Whole dollars: the screen is a picture of what is held.
 fn dollars(c: Option<Cents>) -> String {
-    c.map_or_else(|| "—".to_string(), usd_whole)
+    c.map_or_else(|| "—".to_string(), Cents::usd_whole)
 }
 
 const COLUMNS: [Column; 9] = [
@@ -55,8 +55,8 @@ fn cells(r: &LotRow) -> Vec<String> {
         r.lot.ticker.clone(),
         r.lot.shares.to_string(),
         r.left.to_string(),
-        usd(r.lot.price),
-        usd_whole(r.basis),
+        r.lot.price.usd(),
+        r.basis.usd_whole(),
         dollars(r.value),
         dollars(r.gain),
         if r.long_term { "LT" } else { "ST" }.to_string(),
@@ -89,13 +89,13 @@ fn ticker_line(t: &TickerSummary, width: usize) -> String {
         ),
         // No value: it is the rows' Value column summed.
         Some(p) => (
-            format!("{} @ {}", t.ticker, usd(p.price)),
+            format!("{} @ {}", t.ticker, p.price.usd()),
             format!(" ({})", p.date),
             format!("gain {}", dollars(t.gain)),
         ),
     };
     let left = format!(" · {} left", t.left);
-    let rest = format!(" · basis {} · {tail}", usd_whole(t.basis));
+    let rest = format!(" · basis {} · {tail}", t.basis.usd_whole());
     [
         format!("{head}{date}{left}{rest}"),
         format!("{head}{left}{rest}"),

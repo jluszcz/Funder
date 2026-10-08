@@ -9,7 +9,6 @@ use crate::calc::term::is_long_term;
 use crate::db::{Db, Donation};
 use crate::donate;
 use crate::id::DonationId;
-use crate::money::usd;
 use crate::shares::Shares;
 use anyhow::{Context, Result, ensure};
 use ratatui::Frame;
@@ -217,7 +216,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
                         "{marker} {} {:>9} {:>10}  {term:<7} {}",
                         r.candidate.bought,
                         r.candidate.available.to_string(),
-                        usd(r.candidate.price),
+                        r.candidate.price.usd(),
                         r.text.value()
                     ),
                     style,
