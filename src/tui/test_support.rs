@@ -5,6 +5,7 @@ use crate::db::{self, Db, NewLot};
 use crate::money::Cents;
 use crate::shares::Shares;
 use chrono::NaiveDate;
+use jluszcz_finance_utils::tui::app::App as _;
 pub(super) use jluszcz_finance_utils::tui::testing::{ctrl, draw, draw_buffer, key, shift};
 use ratatui::crossterm::event::KeyCode;
 
