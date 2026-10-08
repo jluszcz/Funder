@@ -361,9 +361,7 @@ mod tests {
     use super::*;
     use crate::db::{Db, open_in_memory};
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     fn lot(db: &Db, ticker: &str, bought: NaiveDate, shares: i64, price: i64) -> LotId {
         db.insert_lot(&NewLot {

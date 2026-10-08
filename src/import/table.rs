@@ -272,9 +272,7 @@ fn cents_at(row: &[Cell], c: usize, n: usize) -> Result<Cents> {
 mod tests {
     use super::*;
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     fn text(s: &str) -> Cell {
         Cell::Text(s.into())

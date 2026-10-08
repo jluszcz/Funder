@@ -75,9 +75,7 @@ mod tests {
     use super::*;
     use calamine::{CellErrorType, ExcelDateTime, ExcelDateTimeType};
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     #[test]
     fn integer_and_float_cells_are_numbers() {

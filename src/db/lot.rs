@@ -182,9 +182,7 @@ mod tests {
     use crate::calc::select::Pick;
     use crate::db::{DonationInput, open_in_memory};
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     pub(crate) fn new_lot(bought: NaiveDate, shares: i64, price: i64) -> NewLot {
         NewLot {

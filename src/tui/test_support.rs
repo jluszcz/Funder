@@ -5,13 +5,10 @@ use crate::db::{self, Db, NewLot};
 use crate::money::Cents;
 use crate::shares::Shares;
 use chrono::NaiveDate;
-use jluszcz_finance_utils::tui::app::App as _;
-pub(super) use jluszcz_finance_utils::tui::testing::{ctrl, draw, draw_buffer, key, shift};
-use ratatui::crossterm::event::KeyCode;
-
-pub(super) fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(y, m, d).unwrap()
-}
+pub(super) use jluszcz_finance_utils::testing::day;
+pub(super) use jluszcz_finance_utils::tui::testing::{
+    ctrl, draw, draw_buffer, key, press, screen, shift, type_text,
+};
 
 /// The day every `tui` test runs on.
 pub(super) fn today() -> NaiveDate {
@@ -41,18 +38,4 @@ pub(super) fn fixture_db() -> Db {
 
 pub(super) fn app() -> App {
     App::new(fixture_db(), today()).unwrap()
-}
-
-pub(super) fn press(app: &mut App, code: KeyCode) {
-    app.on_key(key(code));
-}
-
-pub(super) fn type_text(app: &mut App, text: &str) {
-    for c in text.chars() {
-        press(app, KeyCode::Char(c));
-    }
-}
-
-pub(super) fn screen(app: &mut App, width: u16, height: u16) -> String {
-    draw(width, height, |frame| app.render(frame))
 }

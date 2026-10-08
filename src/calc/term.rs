@@ -14,9 +14,7 @@ pub fn is_long_term(bought: NaiveDate, on: NaiveDate) -> bool {
 mod tests {
     use super::*;
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     #[test]
     fn a_lot_is_long_term_the_day_after_its_first_anniversary() {
