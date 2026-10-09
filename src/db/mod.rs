@@ -37,9 +37,12 @@ impl Db {
     }
 }
 
+/// The database's file name under the data directory.
+pub const FILE_NAME: &str = "funder.db";
+
 /// `~/.local/share/funder/funder.db`.
 pub fn default_path() -> Result<PathBuf> {
-    jluszcz_finance_utils::config::data_path(crate::APP, "funder.db")
+    jluszcz_finance_utils::config::data_path(crate::APP, FILE_NAME)
 }
 
 /// Open (creating if needed) the database at `path`, creating its parent

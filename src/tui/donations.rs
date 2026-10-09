@@ -2,7 +2,7 @@
 //! one draws on.
 
 use super::table::{self, Column};
-use crate::money::{Cents, usd};
+use crate::money::Cents;
 use crate::shares::Shares;
 use crate::summary::{DonationRow, LineRow};
 use ratatui::Frame;
@@ -41,7 +41,11 @@ const INDENT: &str = "  ";
 
 /// A plan's value and gain are marked `~`: they are at today's price.
 fn approx(plan: bool, c: Cents) -> String {
-    if plan { format!("~{}", usd(c)) } else { usd(c) }
+    if plan {
+        format!("~{}", c.usd())
+    } else {
+        c.usd()
+    }
 }
 
 fn row_cells(r: &DonationRow) -> Vec<String> {
@@ -58,7 +62,7 @@ fn row_cells(r: &DonationRow) -> Vec<String> {
         r.donation.ticker.clone(),
         r.donation.shares.to_string(),
         approx(plan, r.totals.value),
-        usd(r.totals.basis),
+        r.totals.basis.usd(),
         approx(plan, r.totals.gain),
         claimed.to_string(),
     ]
@@ -68,8 +72,8 @@ fn line_cells(l: &LineRow, plan: bool) -> Vec<String> {
     vec![
         l.lot.bought.to_string(),
         l.line.shares.to_string(),
-        usd(l.lot.price),
-        usd(l.line.basis),
+        l.lot.price.usd(),
+        l.line.basis.usd(),
         approx(plan, l.line.value),
         approx(plan, l.line.gain),
         format!(

@@ -32,7 +32,7 @@ const SELECT_LOT: &str = "SELECT id, ticker, bought, shares, price FROM lot";
 
 fn from_row(row: &Row) -> rusqlite::Result<Lot> {
     Ok(Lot {
-        id: LotId(row.get(0)?),
+        id: row.get(0)?,
         ticker: row.get(1)?,
         bought: row.get(2)?,
         shares: Shares(row.get(3)?),
@@ -99,7 +99,7 @@ impl Db {
             .conn
             .prepare("SELECT lot_id, SUM(shares) FROM allocation GROUP BY lot_id")?;
         let rows = stmt
-            .query_map([], |r| Ok((LotId(r.get(0)?), Shares(r.get(1)?))))?
+            .query_map([], |r| Ok((r.get(0)?, Shares(r.get(1)?))))?
             .collect::<rusqlite::Result<_>>()?;
         Ok(rows)
     }
@@ -182,9 +182,7 @@ mod tests {
     use crate::calc::select::Pick;
     use crate::db::{DonationInput, open_in_memory};
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     pub(crate) fn new_lot(bought: NaiveDate, shares: i64, price: i64) -> NewLot {
         NewLot {

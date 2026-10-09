@@ -1,9 +1,5 @@
 //! One id type per table, so a lot's id cannot be passed where a donation's
-//! is wanted. Plain `i64` inside: `db` binds and reads `.0`, which keeps
-//! `rusqlite` out of every module that names an id.
+//! is wanted. `row_id!` makes each bind and read as its integer.
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LotId(pub i64);
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DonationId(pub i64);
+jluszcz_finance_utils::row_id!(LotId, "lot");
+jluszcz_finance_utils::row_id!(DonationId, "donation");

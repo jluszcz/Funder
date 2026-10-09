@@ -92,7 +92,7 @@ const SELECT_DONATION: &str = "SELECT id, ticker, date, shares, value, claimed F
 
 fn from_row(row: &Row) -> rusqlite::Result<Donation> {
     Ok(Donation {
-        id: DonationId(row.get(0)?),
+        id: row.get(0)?,
         ticker: row.get(1)?,
         date: row.get(2)?,
         shares: Shares(row.get(3)?),
@@ -132,7 +132,7 @@ impl Db {
         let rows = stmt
             .query_map([id.0], |r| {
                 Ok(Allocation {
-                    lot: LotId(r.get(0)?),
+                    lot: r.get(0)?,
                     shares: Shares(r.get(1)?),
                     manual: r.get(2)?,
                 })
@@ -157,7 +157,7 @@ impl Db {
         let rows: Vec<Candidate> = stmt
             .query_map(params![ticker, excluding.map(|d| d.0)], |r| {
                 Ok(Candidate {
-                    lot: LotId(r.get(0)?),
+                    lot: r.get(0)?,
                     bought: r.get(1)?,
                     price: Cents(r.get(2)?),
                     available: Shares(r.get(3)?),
@@ -361,9 +361,7 @@ mod tests {
     use super::*;
     use crate::db::{Db, open_in_memory};
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     fn lot(db: &Db, ticker: &str, bought: NaiveDate, shares: i64, price: i64) -> LotId {
         db.insert_lot(&NewLot {

@@ -169,9 +169,7 @@ mod tests {
     use crate::calc::select::Pick;
     use crate::db::{DonationInput, NewLot, open_in_memory};
 
-    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
+    use jluszcz_finance_utils::testing::day;
 
     fn today() -> NaiveDate {
         day(2026, 6, 1)
