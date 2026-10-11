@@ -100,11 +100,15 @@ impl App {
     fn reload(&mut self) -> Result<()> {
         let selected = self.selected_lot().map(|r| r.lot.id);
         self.lots = summary::lots(&self.db, self.today)?;
-        let every = self.lots.rows.len();
+        self.lots_view.used_up = self
+            .lots
+            .rows
+            .iter()
+            .filter(|r| r.left <= Shares::ZERO)
+            .count();
         if !self.lots_view.show_all {
             self.lots.rows.retain(|r| r.left > Shares::ZERO);
         }
-        self.lots_view.hidden = every - self.lots.rows.len();
         self.donations = summary::donations(&self.db)?;
         self.donations_view.selected = self
             .donations_view
@@ -500,7 +504,15 @@ impl App {
         match self.status.message() {
             Some(s) if s.error => Paragraph::new(s.text.clone()).style(Style::new().fg(Color::Red)),
             Some(s) => Paragraph::new(s.text.clone()),
-            None => Paragraph::new(help::footer(&self.footer_tables())),
+            None => {
+                let mut items = help::footer_items(&self.footer_tables());
+                if !self.help && self.modal.is_none() && self.screen == Screen::Lots {
+                    // `s` sits between the screen's keys and the global ones.
+                    let at = help::footer_items(&[help::LOTS]).len();
+                    items.splice(at..at, lots::toggle_item(&self.lots_view));
+                }
+                Paragraph::new(items.join("  "))
+            }
         }
     }
 
@@ -648,14 +660,12 @@ mod tests {
     }
 
     #[test]
-    fn a_lot_with_nothing_left_is_hidden_and_the_screen_says_so() {
+    fn a_lot_with_nothing_left_is_hidden_and_the_footer_counts_it() {
         let mut app = app_with_a_lot_used_up();
         let text = screen(&mut app, 120, 20);
         assert!(!text.contains("2020-01-10"), "{text}");
-        assert!(
-            text.contains("1 lot with nothing left is hidden: s shows it"),
-            "{text}"
-        );
+        let footer = text.lines().last().unwrap();
+        assert!(footer.contains("p price  s show (1)  1 lots"), "{footer}");
         let ticker = text.lines().find(|l| l.contains("TDF45 @")).unwrap();
         assert!(ticker.contains("10.000 left"), "{ticker}");
     }
@@ -666,7 +676,10 @@ mod tests {
         press(&mut app, KeyCode::Char('s'));
         let text = screen(&mut app, 120, 20);
         assert!(text.contains("2020-01-10"), "{text}");
-        assert!(!text.contains("hidden"), "{text}");
+        assert!(
+            text.lines().last().unwrap().contains("s hide (1)"),
+            "{text}"
+        );
         press(&mut app, KeyCode::Char('s'));
         assert!(!screen(&mut app, 120, 20).contains("2020-01-10"));
     }
@@ -691,7 +704,7 @@ mod tests {
     }
 
     #[test]
-    fn with_every_lot_used_up_the_ticker_lines_stay_under_the_note() {
+    fn with_every_lot_used_up_the_ticker_lines_stay() {
         let db = crate::tui::test_support::fixture_db();
         for (i, lot) in db.lots().unwrap().into_iter().enumerate() {
             db.write_donation(
@@ -713,7 +726,7 @@ mod tests {
         let mut app = App::new(db, today()).unwrap();
         let text = screen(&mut app, 120, 20);
         assert!(
-            text.contains("3 lots with nothing left are hidden"),
+            text.lines().last().unwrap().contains("s show (3)"),
             "{text}"
         );
         assert!(text.contains("TDF45 @ $50.00"), "{text}");
@@ -892,7 +905,9 @@ mod tests {
     #[test]
     fn the_footer_names_the_screens_keys() {
         let text = screen(&mut app(), 120, 20);
-        assert!(text.lines().last().unwrap().contains("p price"), "{text}");
+        let footer = text.lines().last().unwrap();
+        assert!(footer.contains("p price"), "{footer}");
+        assert!(!footer.contains("s show"), "{footer}");
     }
 
     fn on_donations(mut app: App) -> App {

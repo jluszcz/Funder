@@ -1,8 +1,9 @@
 //! What every key does. The footers are joined from these same tables, so a
 //! footer cannot drift from the panel that explains it.
 
+use jluszcz_finance_utils::tui::help::Entry;
+pub(super) use jluszcz_finance_utils::tui::help::footer_items;
 pub(super) use jluszcz_finance_utils::tui::help::render_panel as render;
-use jluszcz_finance_utils::tui::help::{Entry, footer_items};
 
 pub(super) const GLOBAL: &[Entry] = &[
     Entry::own("1", "lots", "Show the Lots"),
@@ -29,12 +30,12 @@ pub(super) const LOTS: &[Entry] = &[
         "price",
         "Set today's price for the selected lot's ticker",
     ),
-    Entry::own(
-        "s",
-        "show all",
-        "Show every lot, or hide again those with nothing left",
-    ),
+    SHOW_ALL,
 ];
+
+/// The footer names this key itself, with the count of lots it shows or hides.
+pub(super) const SHOW_ALL: Entry =
+    Entry::hidden("s", "Show every lot, or hide again those with nothing left");
 
 pub(super) const DONATIONS: &[Entry] = &[
     Entry::hidden("↑/↓", "Select a donation"),
@@ -102,10 +103,6 @@ pub(super) const HELP: &[Entry] = &[Entry::own(
     "Close this panel (? and F1 too)",
 )];
 
-pub(super) fn footer(tables: &[&[Entry]]) -> String {
-    footer_items(tables).join("  ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,7 +124,7 @@ mod tests {
     #[test]
     fn every_footer_fits_in_a_hundred_and_twenty_columns() {
         for table in ALL {
-            let line = footer(&[table, GLOBAL]);
+            let line = footer_items(&[table, GLOBAL]).join("  ");
             assert!(line.chars().count() <= 120, "{line}");
         }
     }

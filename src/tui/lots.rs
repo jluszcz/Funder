@@ -1,5 +1,6 @@
 //! The Lots screen: every lot, what is left of it, and each ticker's totals.
 
+use super::help;
 use super::table::{self, Column};
 use crate::money::Cents;
 use crate::summary::{LotRow, Lots, TickerSummary};
@@ -14,19 +15,15 @@ pub(super) struct LotsView {
     pub(super) selected: usize,
     /// Whether lots with nothing left are shown; they are hidden by default.
     pub(super) show_all: bool,
-    /// How many lots with nothing left are hidden.
-    pub(super) hidden: usize,
+    /// How many lots have nothing left, whether shown or not.
+    pub(super) used_up: usize,
 }
 
-/// Says what `s` would show, when it would show anything.
-fn hidden_note(view: &LotsView) -> Option<String> {
-    match view.hidden {
-        0 => None,
-        1 => Some("1 lot with nothing left is hidden: s shows it".to_string()),
-        n => Some(format!(
-            "{n} lots with nothing left are hidden: s shows them"
-        )),
-    }
+/// The footer's item for `s`, counting the lots it would show or hide;
+/// none when no lot has nothing left.
+pub(super) fn toggle_item(view: &LotsView) -> Option<String> {
+    let word = if view.show_all { "hide" } else { "show" };
+    (view.used_up > 0).then(|| format!("{} {word} ({})", help::SHOW_ALL.key, view.used_up))
 }
 
 /// Whole dollars: the screen is a picture of what is held.
@@ -106,19 +103,18 @@ fn ticker_line(t: &TickerSummary, width: usize) -> String {
 }
 
 pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView, lots: &Lots) {
-    let note = hidden_note(view);
-    if lots.rows.is_empty() && note.is_none() {
+    if lots.rows.is_empty() && lots.tickers.is_empty() {
         frame.render_widget(Paragraph::new("No lots yet: a adds one"), area);
         return;
     }
     let width = usize::from(area.width);
     let (header, rows) = table(&lots.rows, width);
-    // Header, blank, one line per ticker, and the note under the rows.
+    // Header, blank, and one line per ticker under the rows.
     let room = usize::from(area.height)
-        .saturating_sub(2 + lots.tickers.len() + usize::from(note.is_some()))
+        .saturating_sub(2 + lots.tickers.len())
         .max(1);
     let offset = view.selected.saturating_sub(room - 1);
-    // With every lot hidden there is no table, only the tickers and the note.
+    // With every lot hidden there is no table, only the tickers.
     let mut lines = Vec::new();
     if !lots.rows.is_empty() {
         lines.push(Line::styled(
@@ -146,7 +142,6 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView, lots: &Lots
             .iter()
             .map(|t| Line::from(ticker_line(t, width))),
     );
-    lines.extend(note.map(Line::from));
     frame.render_widget(Paragraph::new(lines), area);
 }
 
