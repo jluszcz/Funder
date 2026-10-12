@@ -1,107 +1,67 @@
-//! `funder import` reads the old cost-basis workbook into the database, and
-//! `funder import-lots` adds the purchases in a brokerage's activity report.
-//! `calamine` is named only under here; `table` and `report` do the rest on
-//! plain cells.
+//! `funder import`: adds the purchases in a brokerage's activity report as
+//! lots. `calamine` is named only under here; `report` does the rest on plain
+//! cells.
 
 pub mod report;
-pub mod table;
 
 use crate::db::Db;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use calamine::{Data, Reader, Xlsx, open_workbook};
 use chrono::NaiveDate;
-pub use report::Purchase;
+pub use report::{Cell, Purchase};
 use std::path::Path;
-pub use table::{Cell, Workbook, WorkbookDonation, WorkbookLot};
 
-/// What an import wrote.
+/// What an import wrote, and what it found already held.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Summary {
-    pub lots: usize,
-    pub donations: usize,
-}
-
-/// What `import-lots` wrote, and what it found already held.
-#[derive(Debug, PartialEq, Eq)]
-pub struct LotSummary {
     pub added: usize,
     pub skipped: usize,
 }
 
-/// The first sheet holding both tables.
-pub fn read(path: &Path) -> Result<Workbook> {
-    first_sheet(path, table::parse)?.with_context(|| {
-        format!(
-            "no sheet in {} has a donations table and a lots table",
-            path.display()
-        )
-    })
-}
-
-/// The purchases on the first sheet with a report's header.
-pub fn read_report(path: &Path) -> Result<Vec<Purchase>> {
-    first_sheet(path, report::parse)?.with_context(|| {
-        format!(
-            "no sheet in {} has a header with {}",
-            path.display(),
-            report::COLUMNS.join(", ")
-        )
-    })
-}
-
-/// The first sheet `parse` finds its tables on. A sheet that cannot be read
-/// as a worksheet (a chart sheet) is skipped like one without them.
-fn first_sheet<T>(
-    path: &Path,
-    parse: impl Fn(&[Vec<Cell>], usize) -> Result<Option<T>>,
-) -> Result<Option<T>> {
+/// The purchases on the first sheet with a report's header. A sheet that
+/// cannot be read as a worksheet (a chart sheet) is skipped like one without
+/// it.
+pub fn read(path: &Path) -> Result<Vec<Purchase>> {
     let mut book: Xlsx<_> =
-        open_workbook(path).with_context(|| format!("opening workbook {}", path.display()))?;
+        open_workbook(path).with_context(|| format!("opening report {}", path.display()))?;
     for name in book.sheet_names() {
         let Ok(range) = book.worksheet_range(&name) else {
             continue;
         };
         let above = range.start().map_or(0, |(row, _)| row as usize);
         let grid: Vec<Vec<Cell>> = range.rows().map(|r| r.iter().map(cell).collect()).collect();
-        if let Some(found) = parse(&grid, above).with_context(|| format!("sheet {name}"))? {
-            return Ok(Some(found));
+        if let Some(found) = report::parse(&grid, above).with_context(|| format!("sheet {name}"))? {
+            return Ok(found);
         }
     }
-    Ok(None)
-}
-
-/// Read, assemble, and load, in one transaction.
-pub fn run(db: &Db, path: &Path, replace: bool) -> Result<Summary> {
-    let bulk = table::assemble(&read(path)?)?;
-    db.load(&bulk, replace)?;
-    Ok(Summary {
-        lots: bulk.lots.len(),
-        donations: bulk.donations.len(),
-    })
+    bail!(
+        "no sheet in {} has a header with {}",
+        path.display(),
+        report::COLUMNS.join(", ")
+    )
 }
 
 /// Read a report and add the lots it holds that the database does not.
-pub fn run_lots(db: &Db, path: &Path) -> Result<LotSummary> {
-    add_lots(db, &read_report(path)?)
+pub fn run(db: &Db, path: &Path) -> Result<Summary> {
+    add_lots(db, &read(path)?)
 }
 
-fn add_lots(db: &Db, purchases: &[Purchase]) -> Result<LotSummary> {
+fn add_lots(db: &Db, purchases: &[Purchase]) -> Result<Summary> {
     let (new, skipped) = report::fresh(report::lots(purchases), &db.lots()?);
     db.insert_lots(&new)?;
-    Ok(LotSummary {
+    Ok(Summary {
         added: new.len(),
         skipped,
     })
 }
 
-/// An error cell (`#VALUE!` from a stock-price formula) reads as empty.
+/// An error cell, a boolean, or a date out of range reads as empty.
 fn cell(data: &Data) -> Cell {
     match data {
         Data::Int(i) => Cell::Number(*i as f64),
         Data::Float(f) => Cell::Number(*f),
         Data::String(s) if s.trim().is_empty() => Cell::Empty,
         Data::String(s) => Cell::Text(s.trim().to_string()),
-        Data::Bool(b) => Cell::Bool(*b),
         // `to_ymd_hms_milli` needs none of calamine's optional features.
         Data::DateTime(dt) => {
             let (y, m, d, ..) = dt.to_ymd_hms_milli();
@@ -145,14 +105,14 @@ mod tests {
         ];
         assert_eq!(
             add_lots(&db, &report).unwrap(),
-            LotSummary {
+            Summary {
                 added: 2,
                 skipped: 0
             }
         );
         assert_eq!(
             add_lots(&db, &report).unwrap(),
-            LotSummary {
+            Summary {
                 added: 0,
                 skipped: 2
             }
@@ -176,7 +136,7 @@ mod tests {
         ];
         assert_eq!(
             add_lots(&db, &report).unwrap(),
-            LotSummary {
+            Summary {
                 added: 0,
                 skipped: 1
             }
@@ -217,6 +177,6 @@ mod tests {
             Cell::Text("TDF45".into())
         );
         assert_eq!(cell(&Data::String("  ".into())), Cell::Empty);
-        assert_eq!(cell(&Data::Bool(true)), Cell::Bool(true));
+        assert_eq!(cell(&Data::Bool(true)), Cell::Empty);
     }
 }

@@ -24,7 +24,6 @@ jobs:
   ci:
     uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
 
-  # `import` is off by default; this job is what keeps it compiling.
   ci-all-features:
     uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
     with:

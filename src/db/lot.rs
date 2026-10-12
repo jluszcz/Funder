@@ -121,7 +121,7 @@ pub(super) fn lot_in(conn: &Connection, id: LotId) -> Result<Lot> {
         .with_context(|| format!("lot {} is gone", id.0))
 }
 
-pub(super) fn insert_lot(conn: &Connection, lot: &NewLot) -> Result<LotId> {
+fn insert_lot(conn: &Connection, lot: &NewLot) -> Result<LotId> {
     validate(lot)?;
     conn.execute(
         "INSERT INTO lot (ticker, bought, shares, price) VALUES (?1, ?2, ?3, ?4)",

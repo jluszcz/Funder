@@ -20,18 +20,10 @@ struct Cli {
 enum Command {
     /// Back the database up to S3, if the schedule says one is due.
     Backup(BackupArgs),
-    /// Load the old cost-basis workbook into the database.
-    #[cfg(feature = "import")]
-    Import {
-        /// Clear existing lots and donations first (prices are kept).
-        #[arg(long)]
-        replace: bool,
-        workbook: std::path::PathBuf,
-    },
     /// Add the purchases in a brokerage activity report as lots, skipping any
     /// already held (same purchase date, ticker and shares).
     #[cfg(feature = "import")]
-    ImportLots { report: std::path::PathBuf },
+    Import { report: std::path::PathBuf },
 }
 
 fn main() -> Result<()> {
@@ -57,13 +49,8 @@ fn main() -> Result<()> {
             backup::command(&BACKUP, &path, cfg.backup.as_ref(), &args, db::snapshot)?
         }
         #[cfg(feature = "import")]
-        Some(Command::Import { replace, workbook }) => {
-            let s = funder::import::run(&db::open(&path)?, &workbook, replace)?;
-            println!("imported {} lots and {} donations", s.lots, s.donations);
-        }
-        #[cfg(feature = "import")]
-        Some(Command::ImportLots { report }) => {
-            let s = funder::import::run_lots(&db::open(&path)?, &report)?;
+        Some(Command::Import { report }) => {
+            let s = funder::import::run(&db::open(&path)?, &report)?;
             println!("added {} lots; {} already held", s.added, s.skipped);
         }
     }
