@@ -53,9 +53,9 @@ PR text. Fixtures use the tickers `TDF45`, `TDF35`, and `USM` and round invented
 | `src/donate.rs` | The policy over `db`: previewing and saving a plan, recording (re-running the selection with manual picks kept, refusing a shortfall; an edit with its shares unchanged keeps its allocations while they still fit), saying whether the lots changed, and the automatic selection the override's `A` restores. |
 | `src/summary.rs` | The rows both screens draw, in neither medium: `lots` (what is left of each lot, valued at the current price, and per-ticker totals) and `donations` (each donation's totals, shortfall, and flagged lines). |
 | `src/tui/` | The screens; `ratatui` is named only here. `app` holds the one `App` and dispatches keys; `form` is the labelled-field modal every form is built on; `help` holds the key tables the footers and the `?` panel are drawn from; `lots` draws the Lots screen; `donations` draws the Donations screen; `plan_form` is the plan form and its live preview; `override_form` is the override: shares typed per lot, typed rows marked manual; `table` lays out the screens' tables across the full width. |
-| `src/import/` | The workbook importer, behind the `import` feature; `calamine` is named only here. `table` is pure: header-located tables, split lots merged back, every allocation manual. |
+| `src/import/` | The importers, behind the `import` feature; `calamine` is named only here. `table` is pure: the workbook's header-located tables, split lots merged back, every allocation manual. `report` is pure: a brokerage activity report's Buy and Reinvestment rows, dated by trade date, merged by date, ticker and price into lots, and dropped when a lot with the same date, ticker and shares is already held. |
 | `src/config.rs` | The TOML config file; only a [backup] section. serde is named only here. |
-| `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI; `backup` is the finance-utils backup. The scheduled check runs only on the default database, and never after `funder backup`. |
+| `src/bin/funder.rs` | clap CLI. No subcommand launches the TUI; `backup` is the finance-utils backup; `import` and `import-lots` exist only with the `import` feature. The scheduled check runs only on the default database, and never after `funder backup`. |
 
 ## Invariants worth knowing before editing
 

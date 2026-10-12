@@ -59,6 +59,16 @@ impl Db {
         insert_lot(&self.conn, lot)
     }
 
+    /// Every lot or, when one is refused, none.
+    pub fn insert_lots(&self, lots: &[NewLot]) -> Result<()> {
+        self.transaction(|conn| {
+            for lot in lots {
+                insert_lot(conn, lot)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Refused when a donation draws on the lot and the edit would break it:
     /// fewer shares than are allocated, another ticker, or a purchase date
     /// after a donation the lot is in.
@@ -191,6 +201,32 @@ mod tests {
             shares: Shares::whole(shares),
             price: Cents(price),
         }
+    }
+
+    #[test]
+    fn inserting_several_lots_writes_none_when_one_is_refused() {
+        let db = open_in_memory().unwrap();
+        let bad = NewLot {
+            shares: Shares::ZERO,
+            ..new_lot(day(2021, 5, 1), 1, 2_000)
+        };
+        assert!(
+            db.insert_lots(&[new_lot(day(2020, 5, 1), 10, 2_000), bad])
+                .is_err()
+        );
+        assert!(db.lots().unwrap().is_empty());
+    }
+
+    #[test]
+    fn inserting_several_lots_writes_each_of_them() {
+        let db = open_in_memory().unwrap();
+        let lots = [
+            new_lot(day(2020, 5, 1), 10, 2_000),
+            new_lot(day(2021, 5, 1), 3, 2_500),
+        ];
+        db.insert_lots(&lots).unwrap();
+        let held: Vec<_> = db.lots().unwrap().into_iter().map(|l| l.shares).collect();
+        assert_eq!(held, [Shares::whole(10), Shares::whole(3)]);
     }
 
     #[test]
