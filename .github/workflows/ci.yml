@@ -24,10 +24,5 @@ jobs:
   ci:
     uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
 
-  ci-all-features:
-    uses: jluszcz/github-utils/.github/workflows/rust-ci.yml@v2
-    with:
-      all-features: true
-
   terraform:
     uses: jluszcz/github-utils/.github/workflows/terraform-ci.yml@v2
