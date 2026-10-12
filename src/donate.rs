@@ -443,4 +443,27 @@ mod tests {
             }]
         );
     }
+
+    #[test]
+    fn a_plan_with_no_lots_records_at_its_past_date_from_the_lots_held_then() {
+        let (db, ids) = fixture();
+        db.insert_plans(&[DonationInput {
+            ticker: "TDF45".into(),
+            date: day(2025, 5, 12),
+            shares: Shares::whole(5),
+            value: None,
+        }])
+        .unwrap();
+        let id = db.donations().unwrap()[0].id;
+        let changed = record(&db, id, day(2025, 5, 12), Shares::whole(5), Cents(25_000)).unwrap();
+        assert!(changed);
+        assert_eq!(
+            db.allocations(id).unwrap(),
+            [Allocation {
+                lot: ids[1],
+                shares: Shares::whole(5),
+                manual: false,
+            }]
+        );
+    }
 }

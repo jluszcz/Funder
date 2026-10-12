@@ -165,6 +165,17 @@ impl Db {
         self.transaction(|conn| write_donation(conn, id, input, picks))
     }
 
+    /// Plans with nothing allocated yet, all or none.
+    pub fn insert_plans(&self, plans: &[DonationInput]) -> Result<()> {
+        self.transaction(|conn| {
+            for plan in plans {
+                ensure!(plan.value.is_none(), "only a plan is inserted without lots");
+                write_donation(conn, None, plan, &[])?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn set_claimed(&self, id: DonationId, claimed: bool) -> Result<()> {
         ensure!(
             !self.donation(id)?.is_plan(),
@@ -544,5 +555,27 @@ mod tests {
         let db = open_in_memory().unwrap();
         let err = db.delete_donation(DonationId(9)).unwrap_err();
         assert!(err.to_string().contains("gone"), "{err}");
+    }
+
+    #[test]
+    fn plans_are_inserted_with_no_allocations() {
+        let db = open_in_memory().unwrap();
+        db.insert_plans(&[input(5, None), input(3, None)]).unwrap();
+        let donations = db.donations().unwrap();
+        assert_eq!(donations.len(), 2);
+        for d in &donations {
+            assert!(d.is_plan());
+            assert!(db.allocations(d.id).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_valued_donation_among_plans_is_refused_and_none_is_inserted() {
+        let db = open_in_memory().unwrap();
+        let err = db
+            .insert_plans(&[input(5, None), input(3, Some(15_000))])
+            .unwrap_err();
+        assert!(err.to_string().contains("plan"), "{err}");
+        assert!(db.donations().unwrap().is_empty());
     }
 }
