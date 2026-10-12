@@ -51,7 +51,15 @@ fn main() -> Result<()> {
         #[cfg(feature = "import")]
         Some(Command::Import { report }) => {
             let s = funder::import::run(&db::open(&path)?, &report)?;
-            println!("added {} lots; {} already held", s.added, s.skipped);
+            println!("added {} lots; {} already held", s.lots, s.lots_skipped);
+            println!(
+                "added {} donations to record; {} already held",
+                s.donations.len(),
+                s.donations_skipped
+            );
+            for d in &s.donations {
+                println!("  {} {} {} shares", d.date, d.ticker, d.shares);
+            }
         }
     }
 

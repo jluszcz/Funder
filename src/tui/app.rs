@@ -252,9 +252,16 @@ impl App {
                 ensure!(!recording || d.is_plan(), "already recorded: e edits it");
                 ensure!(recording || !d.is_plan(), "a plan is recorded with r");
                 let (title, date, value) = if recording {
+                    // A plan with no lots is a gift the import found, made on
+                    // its own date; one planned here is given when recorded.
+                    let date = if r.lines.is_empty() {
+                        d.date
+                    } else {
+                        self.today
+                    };
                     (
                         format!(" Record the plan of {} ", d.date),
-                        self.today,
+                        date,
                         String::new(),
                     )
                 } else {
@@ -982,6 +989,31 @@ mod tests {
         let d = &app.donations_view.rows[app.donations_view.cursor.index()].donation;
         assert_eq!(d.value, Some(crate::money::Cents(62_400)));
         assert_eq!(d.date, today());
+    }
+
+    #[test]
+    fn recording_a_plan_with_no_lots_defaults_to_the_plans_own_date() {
+        let db = crate::tui::test_support::fixture_db();
+        db.insert_plans(&[DonationInput {
+            ticker: "TDF45".into(),
+            date: day(2025, 5, 12),
+            shares: Shares::whole(4),
+            value: None,
+        }])
+        .unwrap();
+        let mut app = on_donations(App::new(db, today()).unwrap());
+        press(&mut app, KeyCode::Char('r'));
+        press(&mut app, KeyCode::Tab);
+        press(&mut app, KeyCode::Tab);
+        type_text(&mut app, "180");
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            app.modal.is_none(),
+            "{:?}",
+            app.status.message().map(|s| &s.text)
+        );
+        let d = &app.donations_view.rows[app.donations_view.cursor.index()].donation;
+        assert_eq!(d.date, day(2025, 5, 12));
     }
 
     #[test]

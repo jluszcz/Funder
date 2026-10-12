@@ -113,12 +113,22 @@ pub struct DonationRow {
 }
 
 /// Every donation and plan, in `Db::donations` order. A plan is valued at its
-/// ticker's current price, which saving the plan required.
+/// ticker's current price, which saving the plan required; a plan with nothing
+/// allocated has nothing to value, and needs no price.
 pub fn donations(db: &Db) -> Result<Vec<DonationRow>> {
     let lots: BTreeMap<LotId, Lot> = db.lots()?.into_iter().map(|l| (l.id, l)).collect();
     db.donations()?
         .into_iter()
         .map(|donation| {
+            let allocations = db.allocations(donation.id)?;
+            if donation.is_plan() && allocations.is_empty() {
+                return Ok(DonationRow {
+                    totals: Totals::default(),
+                    shortfall: donation.shares,
+                    lines: Vec::new(),
+                    donation,
+                });
+            }
             let price = if donation.is_plan() {
                 Some(donate::current_price(db, &donation.ticker)?)
             } else {
@@ -127,7 +137,6 @@ pub fn donations(db: &Db) -> Result<Vec<DonationRow>> {
             let valuation = donation
                 .valuation(price)
                 .context("a donation with no valuation")?;
-            let allocations = db.allocations(donation.id)?;
             let parts: Vec<Part> = allocations
                 .iter()
                 .map(|a| {
@@ -296,5 +305,22 @@ mod tests {
         let row = rows.iter().find(|r| r.donation.id == id).unwrap();
         assert!(row.lines[0].losing);
         assert!(!row.lines[0].long_term);
+    }
+
+    #[test]
+    fn a_plan_with_nothing_allocated_is_drawn_without_a_price() {
+        let db = open_in_memory().unwrap();
+        db.insert_plans(&[DonationInput {
+            ticker: "USM".into(),
+            date: day(2025, 5, 12),
+            shares: Shares::whole(5),
+            value: None,
+        }])
+        .unwrap();
+        let rows = donations(&db).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].totals, Totals::default());
+        assert_eq!(rows[0].shortfall, Shares::whole(5));
+        assert!(rows[0].lines.is_empty());
     }
 }
