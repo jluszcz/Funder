@@ -13,7 +13,7 @@ funder                      # opens ~/.local/share/funder/funder.db
 funder --db /tmp/demo.db    # a scratch database
 funder --scratch            # a throwaway copy of the default database
 funder backup               # upload the database to S3 if a backup is due
-funder import <report.xlsx> # add a brokerage activity report's purchases as lots
+funder import <report.xlsx> # add a brokerage activity report's purchases and gifts
 ```
 
 `1` shows the Lots: every purchase with shares left, what is left of it, and its gain at the price
@@ -28,6 +28,12 @@ shares typed against each; those choices survive recording. `A` restores the aut
 `import` reads the Buy and Reinvestment rows of a brokerage activity report, dated by trade
 date. Rows bought the same day at the same price are one lot. A lot already held with the same
 purchase date, ticker and shares is skipped, so a report can be imported again as it grows.
+
+Its `Transfer (outgoing)` rows are taken as gifts to the fund and added as plans dated the
+transfer's date, merged by date and ticker. The report has no value for them: `r` records each
+with the value from the fund's acknowledgment, at the transfer's date. A donation already held
+with the same date, ticker and shares is skipped, so a gift recorded at another date is added
+again on the next import.
 
 ## Backups
 
