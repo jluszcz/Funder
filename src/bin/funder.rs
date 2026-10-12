@@ -28,6 +28,10 @@ enum Command {
         replace: bool,
         workbook: std::path::PathBuf,
     },
+    /// Add the purchases in a brokerage activity report as lots, skipping any
+    /// already held (same purchase date, ticker and shares).
+    #[cfg(feature = "import")]
+    ImportLots { report: std::path::PathBuf },
 }
 
 fn main() -> Result<()> {
@@ -56,6 +60,11 @@ fn main() -> Result<()> {
         Some(Command::Import { replace, workbook }) => {
             let s = funder::import::run(&db::open(&path)?, &workbook, replace)?;
             println!("imported {} lots and {} donations", s.lots, s.donations);
+        }
+        #[cfg(feature = "import")]
+        Some(Command::ImportLots { report }) => {
+            let s = funder::import::run_lots(&db::open(&path)?, &report)?;
+            println!("added {} lots; {} already held", s.added, s.skipped);
         }
     }
 

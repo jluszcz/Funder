@@ -9,6 +9,7 @@ use crate::ticker;
 use anyhow::{Context, Result, bail, ensure};
 use chrono::NaiveDate;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 /// A cell, as far as the import cares.
 #[derive(Clone, Debug, PartialEq)]
@@ -149,18 +150,16 @@ pub fn assemble(wb: &Workbook) -> Result<Bulk> {
     }
     let mut lots: HashMap<(NaiveDate, String, Cents), usize> = HashMap::new();
     for l in &wb.lots {
-        let i = *lots
-            .entry((l.bought, l.ticker.clone(), l.price))
-            .or_insert_with(|| {
-                bulk.lots.push(NewLot {
-                    ticker: l.ticker.clone(),
-                    bought: l.bought,
-                    shares: Shares::ZERO,
-                    price: l.price,
-                });
-                bulk.lots.len() - 1
-            });
-        bulk.lots[i].shares += l.shares;
+        let i = merge_lot(
+            &mut bulk.lots,
+            &mut lots,
+            NewLot {
+                ticker: l.ticker.clone(),
+                bought: l.bought,
+                shares: l.shares,
+                price: l.price,
+            },
+        );
         let Some(date) = l.donation else { continue };
         let &d = donations.get(&(date, l.ticker.clone())).with_context(|| {
             format!(
@@ -195,6 +194,27 @@ pub fn assemble(wb: &Workbook) -> Result<Bulk> {
     Ok(bulk)
 }
 
+/// Adds `piece` to the lot in `lots` sharing its date, ticker and price, or
+/// makes it one: a purchase listed in pieces is one lot. Returns the lot's
+/// index in `lots`.
+pub(super) fn merge_lot(
+    lots: &mut Vec<NewLot>,
+    index: &mut HashMap<(NaiveDate, String, Cents), usize>,
+    piece: NewLot,
+) -> usize {
+    match index.entry((piece.bought, piece.ticker.clone(), piece.price)) {
+        Entry::Occupied(e) => {
+            let i = *e.get();
+            lots[i].shares += piece.shares;
+            i
+        }
+        Entry::Vacant(e) => {
+            lots.push(piece);
+            *e.insert(lots.len() - 1)
+        }
+    }
+}
+
 fn find(header: &[Cell], names: &[&str]) -> Option<usize> {
     (0..header.len()).find(|&c| {
         names
@@ -210,7 +230,7 @@ fn column_after(header: &[Cell], from: usize, name: &str) -> Result<usize> {
         .with_context(|| format!("the lots table has no {name:?} column"))
 }
 
-fn at(row: &[Cell], c: usize) -> &Cell {
+pub(super) fn at(row: &[Cell], c: usize) -> &Cell {
     row.get(c).unwrap_or(&Cell::Empty)
 }
 

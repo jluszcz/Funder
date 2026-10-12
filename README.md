@@ -14,6 +14,7 @@ funder --db /tmp/demo.db    # a scratch database
 funder --scratch            # a throwaway copy of the default database
 funder backup               # upload the database to S3 if a backup is due
 cargo run --features import -- import <workbook>   # one-time: load the old spreadsheet
+cargo run --features import -- import-lots <report.xlsx>   # add a brokerage activity report's purchases as lots
 ```
 
 `1` shows the Lots: every purchase with shares left, what is left of it, and its gain at the price
@@ -24,6 +25,10 @@ every key.
 highest gain; `r` records it once the shares have moved; `c` marks it claimed.
 `o` lists every lot a donation could draw on, short-term and losing ones in red, and takes the
 shares typed against each; those choices survive recording. `A` restores the automatic choice.
+
+`import-lots` reads the Buy and Reinvestment rows of a brokerage activity report, dated by trade
+date. Rows bought the same day at the same price are one lot. A lot already held with the same
+purchase date, ticker and shares is skipped, so a report can be imported again as it grows.
 
 ## Backups
 
