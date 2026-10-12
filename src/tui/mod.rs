@@ -1,7 +1,6 @@
 //! The terminal UI. `ratatui` is named only under here.
 
 mod app;
-mod cursor;
 mod donations;
 mod form;
 mod funds;
@@ -9,7 +8,6 @@ mod help;
 mod lots;
 mod override_form;
 mod plan_form;
-mod search;
 mod table;
 mod text;
 
@@ -22,6 +20,7 @@ use app::App;
 use chrono::NaiveDate;
 use cursor::{Scroll, Selection, Viewport};
 pub(super) use jluszcz_finance_utils::tui::centered;
+use jluszcz_finance_utils::tui::{cursor, search};
 
 /// Runs the screens until the user quits.
 pub fn run(db: Db, today: NaiveDate) -> Result<()> {

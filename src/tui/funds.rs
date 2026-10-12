@@ -1,11 +1,12 @@
 //! The Funds screen: each ticker held, its price, and its undonated shares
 //! valued at that price.
 
-use super::cursor::{Cursor, Scroll, Viewport, impl_scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::lots::dollars;
 use super::table::{self, Column};
 use super::{viewport, visible_rows};
 use crate::summary::TickerSummary;
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
