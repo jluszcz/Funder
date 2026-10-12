@@ -17,7 +17,7 @@ pub fn current_price(db: &Db, ticker: &str) -> Result<Cents> {
     db.current_prices()?
         .get(ticker)
         .map(|p| p.price)
-        .with_context(|| format!("no price for {ticker} yet: p on the Lots screen sets one"))
+        .with_context(|| format!("no price for {ticker} yet: p on the Funds screen sets one"))
 }
 
 /// The allocations the owner chose by hand: what a re-run keeps.
@@ -214,7 +214,7 @@ mod tests {
     fn a_plan_with_no_price_says_how_to_set_one() {
         let (db, _) = fixture();
         let err = preview_plan(&db, "USM", Shares::whole(1), today()).unwrap_err();
-        assert!(err.to_string().contains("p on the Lots screen"), "{err}");
+        assert!(err.to_string().contains("p on the Funds screen"), "{err}");
     }
 
     #[test]

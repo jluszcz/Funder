@@ -3,7 +3,7 @@
 
 use super::cursor::{Cursor, Scroll, Viewport, impl_scroll};
 use super::table::{self, Column};
-use super::viewport;
+use super::{viewport, visible_rows};
 use crate::money::Cents;
 use crate::shares::Shares;
 use crate::summary::{DonationRow, LineRow};
@@ -122,25 +122,11 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView) -> Vie
     let height = usize::from(area.height);
     let table_room = rows.len().min((height.saturating_sub(1) / 3).max(3));
     let viewport = viewport(view, rows.len(), table_room);
-    let offset = viewport.offset;
     let width = usize::from(area.width);
     let cells: Vec<Vec<String>> = rows.iter().map(row_cells).collect();
     let mut table = table::lines(&COLUMNS.iter().collect::<Vec<_>>(), &cells, width).into_iter();
     let mut lines = vec![Line::styled(table.next().unwrap_or_default(), bold)];
-    lines.extend(
-        table
-            .enumerate()
-            .skip(offset)
-            .take(table_room)
-            .map(|(i, text)| {
-                let style = if i == selected {
-                    Style::new().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::new()
-                };
-                Line::styled(text, style)
-            }),
-    );
+    lines.extend(visible_rows(table, viewport, selected));
     let r = &rows[selected];
     lines.push(Line::default());
     lines.push(Line::styled(

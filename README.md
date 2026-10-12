@@ -16,14 +16,18 @@ funder backup               # upload the database to S3 if a backup is due
 funder import <report.xlsx> # add a brokerage activity report's purchases and gifts
 ```
 
-`1` shows the Lots: every purchase with shares left, what is left of it, and its gain at the price
-`p` sets; `s` shows the used-up ones too. `a`, `e`, and `d` add, edit, and delete a lot; `?` lists
-every key.
+`1` shows the Lots: every purchase with shares left, what is left of it, and its gain at the
+current price; `s` shows the used-up ones too. `a`, `e`, and `d` add, edit, and delete a lot; `?`
+lists every key.
 
 `2` shows the Donations. `n` plans one from a dollar target, drawing on the long-term lots with the
 highest gain; `r` records it once the shares have moved; `c` marks it claimed.
 `o` lists every lot a donation could draw on, short-term and losing ones in red, and takes the
 shares typed against each; those choices survive recording. `A` restores the automatic choice.
+
+`3` shows the Funds: each ticker's price and the date it was set, with what is left of it valued
+at that price. `p` sets the selected fund's price and moves to the next, so a run down the list
+prices them all.
 
 `import` reads the Buy and Reinvestment rows of a brokerage activity report, dated by trade
 date. Rows bought the same day at the same price are one lot. A lot already held with the same

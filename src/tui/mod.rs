@@ -4,6 +4,7 @@ mod app;
 mod cursor;
 mod donations;
 mod form;
+mod funds;
 mod help;
 mod lots;
 mod override_form;
@@ -47,4 +48,25 @@ fn viewport(list: &impl Scroll, rows: usize, height: usize) -> Viewport {
         height,
     );
     Viewport { height, offset }
+}
+
+/// The table rows `viewport` shows, the selected one reversed.
+fn visible_rows(
+    rows: impl IntoIterator<Item = String>,
+    viewport: Viewport,
+    selected: usize,
+) -> impl Iterator<Item = ratatui::text::Line<'static>> {
+    use ratatui::style::{Modifier, Style};
+    rows.into_iter()
+        .enumerate()
+        .skip(viewport.offset)
+        .take(viewport.height)
+        .map(move |(i, text)| {
+            let style = if i == selected {
+                Style::new().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::new()
+            };
+            ratatui::text::Line::styled(text, style)
+        })
 }
