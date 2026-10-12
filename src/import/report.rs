@@ -1,6 +1,7 @@
 //! A brokerage's activity report, read into the purchases and outgoing
-//! transfers it records and assembled into lots and plans. Pure: `mod.rs` turns calamine's cells into [`Cell`]s,
-//! and nothing here knows a spreadsheet library exists.
+//! transfers it records and assembled into lots and plans. Pure: `mod.rs`
+//! turns calamine's cells into [`Cell`]s, and nothing here knows a
+//! spreadsheet library exists.
 
 use crate::db::{Donation, DonationInput, Lot, NewLot};
 use crate::money::Cents;
@@ -56,10 +57,10 @@ const TRANSFER: &str = "Transfer (outgoing)";
 /// The columns a purchase is read from, located by name in the header row.
 pub const COLUMNS: [&str; 5] = ["Trade date", "Symbol", "Type", "Quantity", "Price"];
 
-/// The report's purchases and outgoing transfers, found under its header row. `None` when no row is
-/// the header, so the caller tries the next sheet. `above` is the number of
-/// sheet rows above `grid`'s first, so a row number an error names is the
-/// spreadsheet's own.
+/// The report's purchases and outgoing transfers, found under its header
+/// row. `None` when no row is the header, so the caller tries the next
+/// sheet. `above` is the number of sheet rows above `grid`'s first, so a row
+/// number an error names is the spreadsheet's own.
 pub fn parse(grid: &[Vec<Cell>], above: usize) -> Result<Option<Report>> {
     let Some((h, [date, symbol, kind, quantity, price])) = grid
         .iter()

@@ -1,6 +1,6 @@
 //! `funder import`: adds the purchases in a brokerage's activity report as
-//! lots, and its outgoing transfers as plans to record. `calamine` is named only under here; `report` does the rest on plain
-//! cells.
+//! lots, and its outgoing transfers as plans to record. `calamine` is named
+//! only under here; `report` does the rest on plain cells.
 
 pub mod report;
 
@@ -23,9 +23,9 @@ pub struct Summary {
     pub donations_skipped: usize,
 }
 
-/// The purchases and transfers on the first sheet with a report's header. A sheet that
-/// cannot be read as a worksheet (a chart sheet) is skipped like one without
-/// it.
+/// The purchases and transfers on the first sheet with a report's header. A
+/// sheet that cannot be read as a worksheet (a chart sheet) is skipped like
+/// one without it.
 pub fn read(path: &Path) -> Result<Report> {
     let mut book: Xlsx<_> =
         open_workbook(path).with_context(|| format!("opening report {}", path.display()))?;
