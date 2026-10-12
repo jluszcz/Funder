@@ -25,8 +25,8 @@ value from the fund's gift acknowledgment.
   negated, and one that is not below zero is refused with its row named. Price is not read.
 - `parse` returns `Report { purchases, transfers }` instead of the purchases alone. `COLUMNS` is
   unchanged: a transfer needs no column a purchase does not.
-- `transfers` merges transfers sharing a date and ticker into one, as `lots` merges purchases: one
-  gift the report lists in pieces is one donation.
+- `donations` merges transfers sharing a date and ticker into one plan (`DonationInput` with no
+  value), as `lots` merges purchases: one gift the report lists in pieces is one donation.
 - `fresh_donations(transfers, existing)` mirrors `fresh`: a transfer is already held when a
   donation, plan or recorded, has its date, ticker, and shares, each held donation accounting for
   one transfer at most. It returns the new ones and how many were skipped.
@@ -34,11 +34,11 @@ value from the fund's gift acknowledgment.
 ### `src/import/mod.rs`
 
 - `run` inserts the fresh lots first, then a plan per fresh transfer, dated the transfer's date,
-  for its shares, with **no allocations**. A plan may fall short, so this needs no change to
-  `db::donation::write_donation` or the invariants. Nothing is selected at import: without a value
-  there is no gain to select on.
-- `Summary` gains `donations` and `donations_skipped`; `funder import` prints both counts beside the
-  lots'.
+  for its shares, with **no allocations**, through a new `Db::insert_plans` (all or none). A plan
+  may fall short, so this needs no change to `db::donation::write_donation` or the invariants.
+  Nothing is selected at import: without a value there is no gain to select on.
+- `Summary` is `{ lots, lots_skipped, donations, donations_skipped }`; `funder import` prints the
+  donation counts beside the lots'.
 
 ### Recording
 
@@ -49,6 +49,13 @@ types the value. `donate::record` already re-runs the selection at that date and
 If a newer plan already holds the lots the past donation needs, recording is refused with the
 existing shortfall message, and the owner removes or re-plans the newer one. Giving older
 donations priority automatically is out of scope.
+
+### Drawing a plan with no lots
+
+`summary::donations` asks for the current price of every plan, so one imported plan for a ticker
+with no price set would make the Donations screen fail to draw. A plan with nothing allocated has
+nothing to value: its row has zero totals, no lines, and its whole shares as shortfall, with no
+price needed.
 
 ### Schema
 
