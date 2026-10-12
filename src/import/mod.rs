@@ -4,7 +4,7 @@
 
 pub mod report;
 
-use crate::db::Db;
+use crate::db::{Db, DonationInput};
 use anyhow::{Context, Result, bail};
 use calamine::{Data, Reader, Xlsx, open_workbook};
 use chrono::NaiveDate;
@@ -16,8 +16,10 @@ use std::path::Path;
 pub struct Summary {
     pub lots: usize,
     pub lots_skipped: usize,
-    /// Plans, each still to be recorded with the value the fund received.
-    pub donations: usize,
+    /// The plans added, each still to be recorded with the value the fund
+    /// received; named so the owner can see which transfers were taken as
+    /// gifts.
+    pub donations: Vec<DonationInput>,
     pub donations_skipped: usize,
 }
 
@@ -60,7 +62,7 @@ fn add(db: &Db, report: &Report) -> Result<Summary> {
     Ok(Summary {
         lots: lots.len(),
         lots_skipped,
-        donations: plans.len(),
+        donations: plans,
         donations_skipped,
     })
 }
@@ -91,7 +93,7 @@ mod tests {
     use super::*;
     use calamine::{CellErrorType, ExcelDateTime, ExcelDateTimeType};
 
-    use crate::db::{NewLot, open_in_memory};
+    use crate::db::{DonationInput, NewLot, open_in_memory};
     use crate::money::Cents;
     use crate::shares::Shares;
     use jluszcz_finance_utils::testing::day;
@@ -125,7 +127,7 @@ mod tests {
             Summary {
                 lots: 2,
                 lots_skipped: 0,
-                donations: 0,
+                donations: Vec::new(),
                 donations_skipped: 0,
             }
         );
@@ -134,7 +136,7 @@ mod tests {
             Summary {
                 lots: 0,
                 lots_skipped: 2,
-                donations: 0,
+                donations: Vec::new(),
                 donations_skipped: 0,
             }
         );
@@ -160,7 +162,7 @@ mod tests {
             Summary {
                 lots: 0,
                 lots_skipped: 1,
-                donations: 0,
+                donations: Vec::new(),
                 donations_skipped: 0,
             }
         );
@@ -183,7 +185,12 @@ mod tests {
             Summary {
                 lots: 1,
                 lots_skipped: 0,
-                donations: 1,
+                donations: vec![DonationInput {
+                    ticker: "TDF45".into(),
+                    date: day(2025, 5, 12),
+                    shares: Shares::whole(5),
+                    value: None,
+                }],
                 donations_skipped: 0,
             }
         );
@@ -200,7 +207,7 @@ mod tests {
             Summary {
                 lots: 0,
                 lots_skipped: 1,
-                donations: 0,
+                donations: Vec::new(),
                 donations_skipped: 1,
             }
         );

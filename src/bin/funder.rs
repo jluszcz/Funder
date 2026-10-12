@@ -54,8 +54,12 @@ fn main() -> Result<()> {
             println!("added {} lots; {} already held", s.lots, s.lots_skipped);
             println!(
                 "added {} donations to record; {} already held",
-                s.donations, s.donations_skipped
+                s.donations.len(),
+                s.donations_skipped
             );
+            for d in &s.donations {
+                println!("  {} {} {} shares", d.date, d.ticker, d.shares);
+            }
         }
     }
 

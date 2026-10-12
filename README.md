@@ -33,7 +33,8 @@ Its `Transfer (outgoing)` rows are taken as gifts to the fund and added as plans
 transfer's date, merged by date and ticker. The report has no value for them: `r` records each
 with the value from the fund's acknowledgment, at the transfer's date. A donation already held
 with the same date, ticker and shares is skipped, so a gift recorded at another date is added
-again on the next import.
+again on the next import, as is a transfer whose plan was deleted. `import` lists each plan it
+adds.
 
 ## Backups
 
