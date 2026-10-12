@@ -5,9 +5,9 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-# The workbook importer: `funder import`, `src/import/`, and `calamine` under
-# it. Off by default: it is run once, and a default build compiles no
-# spreadsheet parser.
+default = ["import"]
+# The report importer: `funder import`, `src/import/`, and `calamine` under
+# it. A build without it compiles no spreadsheet parser.
 import = ["dep:calamine"]
 
 [dependencies]

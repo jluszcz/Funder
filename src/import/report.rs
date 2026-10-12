@@ -1,8 +1,7 @@
 //! A brokerage's activity report, read into the purchases it records and
-//! assembled into lots. Pure, like `table`: `mod.rs` hands it [`Cell`]s.
+//! assembled into lots. Pure: `mod.rs` turns calamine's cells into [`Cell`]s,
+//! and nothing here knows a spreadsheet library exists.
 
-use super::Cell;
-use super::table::{at, merge_lot};
 use crate::db::{Lot, NewLot};
 use crate::money::Cents;
 use crate::shares::Shares;
@@ -10,6 +9,16 @@ use crate::ticker;
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::NaiveDate;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
+/// A cell, as far as the import cares.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cell {
+    Empty,
+    Number(f64),
+    Text(String),
+    Date(NaiveDate),
+}
 
 /// One row the report records as shares bought.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,6 +103,10 @@ fn columns(header: &[Cell]) -> Option<[usize; 5]> {
     ])
 }
 
+fn at(row: &[Cell], c: usize) -> &Cell {
+    row.get(c).unwrap_or(&Cell::Empty)
+}
+
 /// A cell's figure as text. A number prints as its shortest round-tripping
 /// decimal, so `9.5` reads as `"9.5"` and parses exactly.
 fn text(cell: &Cell) -> Option<String> {
@@ -124,20 +137,23 @@ fn cents(cell: &Cell) -> Result<Cents> {
 }
 
 /// One lot per purchase, with rows sharing a date, ticker and price merged:
-/// one order the report lists in pieces, as the workbook import merges them.
+/// one order the report lists in pieces is one lot.
 pub fn lots(purchases: &[Purchase]) -> Vec<NewLot> {
-    let (mut lots, mut index) = (Vec::new(), HashMap::new());
+    let mut lots: Vec<NewLot> = Vec::new();
+    let mut index: HashMap<(NaiveDate, String, Cents), usize> = HashMap::new();
     for p in purchases {
-        merge_lot(
-            &mut lots,
-            &mut index,
-            NewLot {
-                ticker: p.ticker.clone(),
-                bought: p.bought,
-                shares: p.shares,
-                price: p.price,
-            },
-        );
+        match index.entry((p.bought, p.ticker.clone(), p.price)) {
+            Entry::Occupied(e) => lots[*e.get()].shares += p.shares,
+            Entry::Vacant(e) => {
+                e.insert(lots.len());
+                lots.push(NewLot {
+                    ticker: p.ticker.clone(),
+                    bought: p.bought,
+                    shares: p.shares,
+                    price: p.price,
+                });
+            }
+        }
     }
     lots
 }

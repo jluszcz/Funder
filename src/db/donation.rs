@@ -3,10 +3,9 @@
 //! [`write_donation`], which is where the invariants live.
 
 use super::Db;
-use super::lot::{insert_lot, lot_in};
+use super::lot::lot_in;
 use crate::calc::gain::Valuation;
 use crate::calc::select::{Candidate, Pick};
-use crate::db::NewLot;
 use crate::id::{DonationId, LotId};
 use crate::money::Cents;
 use crate::shares::Shares;
@@ -71,21 +70,6 @@ pub struct Allocation {
     pub lot: LotId,
     pub shares: Shares,
     pub manual: bool,
-}
-
-/// Everything an import writes, in one transaction. A donation's picks name
-/// lots by their index in `lots`, since none has an id yet.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Bulk {
-    pub lots: Vec<NewLot>,
-    pub donations: Vec<BulkDonation>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BulkDonation {
-    pub input: DonationInput,
-    pub claimed: bool,
-    pub picks: Vec<(usize, Shares)>,
 }
 
 const SELECT_DONATION: &str = "SELECT id, ticker, date, shares, value, claimed FROM donation";
@@ -200,60 +184,6 @@ impl Db {
         ensure!(deleted == 1, "donation {} is gone", id.0);
         Ok(())
     }
-
-    /// Write an import. A database already holding lots or donations is
-    /// refused unless `replace`, which clears them (prices stay) in the same
-    /// transaction. Imported allocations are manual: they are choices the
-    /// owner made by hand, and a re-run of the selection must keep them.
-    pub fn load(&self, bulk: &Bulk, replace: bool) -> Result<()> {
-        self.transaction(|conn| {
-            let existing: i64 = conn.query_row(
-                "SELECT (SELECT COUNT(*) FROM lot) + (SELECT COUNT(*) FROM donation)",
-                [],
-                |r| r.get(0),
-            )?;
-            if existing > 0 {
-                ensure!(
-                    replace,
-                    "the database already has lots or donations: pass --replace to clear them first"
-                );
-                conn.execute_batch(
-                    "DELETE FROM allocation; DELETE FROM donation; DELETE FROM lot;",
-                )?;
-            }
-            let ids = bulk
-                .lots
-                .iter()
-                .map(|lot| insert_lot(conn, lot))
-                .collect::<Result<Vec<_>>>()?;
-            for d in &bulk.donations {
-                ensure!(
-                    d.input.value.is_some(),
-                    "the donation of {} has no value: a load writes only recorded donations",
-                    d.input.date
-                );
-                let picks = d
-                    .picks
-                    .iter()
-                    .map(|&(i, shares)| {
-                        let lot = *ids.get(i).with_context(|| {
-                            format!("a pick of the donation of {} names no lot", d.input.date)
-                        })?;
-                        Ok(Pick {
-                            lot,
-                            shares,
-                            manual: true,
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                let id = write_donation(conn, None, &d.input, &picks)?;
-                if d.claimed {
-                    conn.execute("UPDATE donation SET claimed = 1 WHERE id = ?1", [id.0])?;
-                }
-            }
-            Ok(())
-        })
-    }
 }
 
 /// The one writer of allocations. Inside a caller's transaction: a refusal
@@ -359,7 +289,7 @@ fn write_donation(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::{Db, open_in_memory};
+    use crate::db::{Db, NewLot, open_in_memory};
 
     use jluszcz_finance_utils::testing::day;
 
@@ -569,43 +499,6 @@ mod tests {
         );
     }
 
-    fn bulk() -> Bulk {
-        Bulk {
-            lots: vec![NewLot {
-                ticker: "TDF45".into(),
-                bought: day(2020, 2, 1),
-                shares: Shares::whole(10),
-                price: Cents(2_000),
-            }],
-            donations: vec![BulkDonation {
-                input: input(4, Some(20_000)),
-                claimed: true,
-                picks: vec![(0, Shares::whole(4))],
-            }],
-        }
-    }
-
-    #[test]
-    fn a_bulk_load_writes_lots_donations_and_manual_allocations() {
-        let db = open_in_memory().unwrap();
-        db.load(&bulk(), false).unwrap();
-        let d = &db.donations().unwrap()[0];
-        assert!(d.claimed);
-        let allocations = db.allocations(d.id).unwrap();
-        assert!(allocations[0].manual);
-    }
-
-    #[test]
-    fn a_bulk_load_into_a_database_with_lots_needs_replace() {
-        let db = open_in_memory().unwrap();
-        db.load(&bulk(), false).unwrap();
-        let err = db.load(&bulk(), false).unwrap_err();
-        assert!(err.to_string().contains("--replace"), "{err}");
-        db.load(&bulk(), true).unwrap();
-        assert_eq!(db.lots().unwrap().len(), 1);
-        assert_eq!(db.donations().unwrap().len(), 1);
-    }
-
     #[test]
     fn a_refused_rewrite_leaves_the_old_allocations_and_claim_intact() {
         let (db, a, _) = two_lots();
@@ -651,40 +544,5 @@ mod tests {
         let db = open_in_memory().unwrap();
         let err = db.delete_donation(DonationId(9)).unwrap_err();
         assert!(err.to_string().contains("gone"), "{err}");
-    }
-
-    #[test]
-    fn a_replacing_load_keeps_prices() {
-        let db = open_in_memory().unwrap();
-        db.set_price("TDF45", day(2026, 1, 2), Cents(5_000))
-            .unwrap();
-        db.load(&bulk(), false).unwrap();
-        db.load(&bulk(), true).unwrap();
-        assert_eq!(db.current_prices().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn a_bulk_load_containing_a_plan_is_refused_and_writes_nothing() {
-        let db = open_in_memory().unwrap();
-        let mut b = bulk();
-        b.donations[0].input.value = None;
-        b.donations[0].claimed = false;
-        let err = db.load(&b, false).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("donation of 2026-01-05 has no value"),
-            "{err}"
-        );
-        assert!(db.lots().unwrap().is_empty());
-        assert!(db.donations().unwrap().is_empty());
-    }
-
-    #[test]
-    fn an_import_pick_naming_no_lot_names_the_donation() {
-        let db = open_in_memory().unwrap();
-        let mut b = bulk();
-        b.donations[0].picks = vec![(5, Shares::whole(4))];
-        let err = db.load(&b, false).unwrap_err();
-        assert!(err.to_string().contains("donation of 2026-01-05"), "{err}");
     }
 }
