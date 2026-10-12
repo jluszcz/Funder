@@ -42,9 +42,9 @@ value from the fund's gift acknowledgment.
 
 ### Recording
 
-Unchanged. `r` on the plan opens the record form; the owner sets the date to the transfer's (the
-form's title names it; the field defaults to today, which is right for a plan made by hand) and
-types the value. `donate::record` already re-runs the selection at that date and value.
+`r` on the plan opens the record form. Its date defaults to the plan's own date when the plan has
+no lots, as an imported one does, and to today otherwise, which is right for a plan made by hand;
+the owner types the value. `donate::record` already re-runs the selection at that date and value.
 
 If a newer plan already holds the lots the past donation needs, recording is refused with the
 existing shortfall message, and the owner removes or re-plans the newer one. Giving older
