@@ -1,8 +1,8 @@
-//! A brokerage's activity report, read into the purchases it records and
-//! assembled into lots. Pure: `mod.rs` turns calamine's cells into [`Cell`]s,
+//! A brokerage's activity report, read into the purchases and outgoing
+//! transfers it records and assembled into lots and plans. Pure: `mod.rs` turns calamine's cells into [`Cell`]s,
 //! and nothing here knows a spreadsheet library exists.
 
-use crate::db::{Lot, NewLot};
+use crate::db::{Donation, DonationInput, Lot, NewLot};
 use crate::money::Cents;
 use crate::shares::Shares;
 use crate::ticker;
@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow, bail, ensure};
 use chrono::NaiveDate;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::hash::Hash;
 
 /// A cell, as far as the import cares.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,14 +32,35 @@ pub struct Purchase {
     pub price: Cents,
 }
 
+/// One row the report records as shares leaving the account: a gift to the
+/// fund, as far as the import knows, since the report does not say where they
+/// went. It carries no price, so it cannot value the gift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Transfer {
+    /// The spreadsheet's own row number, for an error to name.
+    pub row: usize,
+    pub date: NaiveDate,
+    pub ticker: String,
+    pub shares: Shares,
+}
+
+/// What a report records: shares bought, and shares given away.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Report {
+    pub purchases: Vec<Purchase>,
+    pub transfers: Vec<Transfer>,
+}
+
+const TRANSFER: &str = "Transfer (outgoing)";
+
 /// The columns a purchase is read from, located by name in the header row.
 pub const COLUMNS: [&str; 5] = ["Trade date", "Symbol", "Type", "Quantity", "Price"];
 
-/// The report's purchases, found under its header row. `None` when no row is
+/// The report's purchases and outgoing transfers, found under its header row. `None` when no row is
 /// the header, so the caller tries the next sheet. `above` is the number of
 /// sheet rows above `grid`'s first, so a row number an error names is the
 /// spreadsheet's own.
-pub fn parse(grid: &[Vec<Cell>], above: usize) -> Result<Option<Vec<Purchase>>> {
+pub fn parse(grid: &[Vec<Cell>], above: usize) -> Result<Option<Report>> {
     let Some((h, [date, symbol, kind, quantity, price])) = grid
         .iter()
         .enumerate()
@@ -46,29 +68,48 @@ pub fn parse(grid: &[Vec<Cell>], above: usize) -> Result<Option<Vec<Purchase>>> 
     else {
         return Ok(None);
     };
-    let mut purchases = Vec::new();
+    let mut report = Report::default();
     for (i, row) in grid.iter().enumerate().skip(h + 1) {
         let n = above + i + 1;
-        if !matches!(at(row, kind), Cell::Text(t) if is_purchase(t)) {
+        let Cell::Text(t) = at(row, kind) else {
             continue;
+        };
+        if is_purchase(t) {
+            report.purchases.push(Purchase {
+                row: n,
+                bought: date_at(row, date, n)?,
+                ticker: ticker_at(row, symbol, n)?,
+                shares: quantity_at(row, quantity, n)?,
+                price: cents(at(row, price)).map_err(|e| anyhow!("row {n}: {e:#}"))?,
+            });
+        } else if t == TRANSFER {
+            report.transfers.push(Transfer {
+                row: n,
+                date: date_at(row, date, n)?,
+                ticker: ticker_at(row, symbol, n)?,
+                shares: transferred_at(row, quantity, n)?,
+            });
         }
-        purchases.push(Purchase {
-            row: n,
-            bought: match at(row, date) {
-                Cell::Date(d) => *d,
-                Cell::Text(t) => NaiveDate::parse_from_str(t, "%m/%d/%Y")
-                    .with_context(|| format!("row {n}: the trade date {t:?} is not a date"))?,
-                _ => bail!("row {n}: no trade date"),
-            },
-            ticker: match at(row, symbol) {
-                Cell::Text(t) => ticker::normalize(t).map_err(|e| anyhow!("row {n}: {e:#}"))?,
-                _ => bail!("row {n}: no symbol"),
-            },
-            shares: quantity_at(row, quantity, n)?,
-            price: cents(at(row, price)).map_err(|e| anyhow!("row {n}: {e:#}"))?,
-        });
     }
-    Ok(Some(purchases))
+    Ok(Some(report))
+}
+
+/// A row's trade date.
+fn date_at(row: &[Cell], c: usize, n: usize) -> Result<NaiveDate> {
+    match at(row, c) {
+        Cell::Date(d) => Ok(*d),
+        Cell::Text(t) => NaiveDate::parse_from_str(t, "%m/%d/%Y")
+            .with_context(|| format!("row {n}: the trade date {t:?} is not a date")),
+        _ => bail!("row {n}: no trade date"),
+    }
+}
+
+/// A row's ticker, as stored.
+fn ticker_at(row: &[Cell], c: usize, n: usize) -> Result<String> {
+    match at(row, c) {
+        Cell::Text(t) => ticker::normalize(t).map_err(|e| anyhow!("row {n}: {e:#}")),
+        _ => bail!("row {n}: no symbol"),
+    }
 }
 
 /// The shares a purchase row bought. A zero quantity is refused here, where
@@ -82,6 +123,16 @@ fn quantity_at(row: &[Cell], c: usize, n: usize) -> Result<Shares> {
         shares > Shares::ZERO,
         "row {n}: a quantity must be more than zero"
     );
+    Ok(shares)
+}
+
+/// The shares a transfer row sent out, which the report prints below zero.
+fn transferred_at(row: &[Cell], c: usize, n: usize) -> Result<Shares> {
+    let raw = text(at(row, c)).with_context(|| format!("row {n}: no quantity"))?;
+    let below = || anyhow!("row {n}: an outgoing transfer's quantity {raw:?} is not below zero");
+    let out = raw.trim().strip_prefix('-').ok_or_else(below)?;
+    let shares: Shares = out.parse().map_err(|e| anyhow!("row {n}: {e:#}"))?;
+    ensure!(shares > Shares::ZERO, below());
     Ok(shares)
 }
 
@@ -162,20 +213,73 @@ pub fn lots(purchases: &[Purchase]) -> Vec<NewLot> {
 /// held when one has its date, ticker and shares; each held lot accounts for
 /// one incoming lot at most, so two identical purchases need two held lots.
 pub fn fresh(lots: Vec<NewLot>, existing: &[Lot]) -> (Vec<NewLot>, usize) {
-    let mut held: HashMap<(NaiveDate, String, Shares), usize> = HashMap::new();
-    for l in existing {
-        *held
-            .entry((l.bought, l.ticker.clone(), l.shares))
-            .or_default() += 1;
+    unheld(
+        lots,
+        existing
+            .iter()
+            .map(|l| (l.bought, l.ticker.clone(), l.shares)),
+        |l| (l.bought, l.ticker.clone(), l.shares),
+    )
+}
+
+/// One plan per gift, with transfers sharing a date and ticker merged: one gift
+/// the report lists in pieces is one donation. Each is a plan, because the
+/// report holds no value to record it at.
+pub fn donations(transfers: &[Transfer]) -> Vec<DonationInput> {
+    let mut plans: Vec<DonationInput> = Vec::new();
+    let mut index: HashMap<(NaiveDate, String), usize> = HashMap::new();
+    for t in transfers {
+        match index.entry((t.date, t.ticker.clone())) {
+            Entry::Occupied(e) => plans[*e.get()].shares += t.shares,
+            Entry::Vacant(e) => {
+                e.insert(plans.len());
+                plans.push(DonationInput {
+                    ticker: t.ticker.clone(),
+                    date: t.date,
+                    shares: t.shares,
+                    value: None,
+                });
+            }
+        }
+    }
+    plans
+}
+
+/// The plans not already in `existing`, and how many were. A gift is already
+/// held when a donation, plan or recorded, has its date, ticker and shares,
+/// each accounting for one incoming plan at most.
+pub fn fresh_donations(
+    plans: Vec<DonationInput>,
+    existing: &[Donation],
+) -> (Vec<DonationInput>, usize) {
+    unheld(
+        plans,
+        existing
+            .iter()
+            .map(|d| (d.date, d.ticker.clone(), d.shares)),
+        |p| (p.date, p.ticker.clone(), p.shares),
+    )
+}
+
+/// The items whose key is not among `held`, and how many were; each held key
+/// accounts for one item at most.
+fn unheld<T, K: Eq + Hash>(
+    items: Vec<T>,
+    held: impl IntoIterator<Item = K>,
+    key: impl Fn(&T) -> K,
+) -> (Vec<T>, usize) {
+    let mut count: HashMap<K, usize> = HashMap::new();
+    for k in held {
+        *count.entry(k).or_default() += 1;
     }
     let (mut new, mut skipped) = (Vec::new(), 0);
-    for l in lots {
-        match held.get_mut(&(l.bought, l.ticker.clone(), l.shares)) {
+    for item in items {
+        match count.get_mut(&key(&item)) {
             Some(n) if *n > 0 => {
                 *n -= 1;
                 skipped += 1;
             }
-            _ => new.push(l),
+            _ => new.push(item),
         }
     }
     (new, skipped)
@@ -184,7 +288,8 @@ pub fn fresh(lots: Vec<NewLot>, existing: &[Lot]) -> (Vec<NewLot>, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::id::LotId;
+    use crate::db::Donation;
+    use crate::id::{DonationId, LotId};
 
     use jluszcz_finance_utils::testing::day;
 
@@ -268,7 +373,7 @@ mod tests {
 
     #[test]
     fn buys_and_reinvestments_are_purchases_dated_by_trade_date_and_nothing_else_is() {
-        let p = parse(&grid(), 0).unwrap().unwrap();
+        let p = parse(&grid(), 0).unwrap().unwrap().purchases;
         assert_eq!(
             p,
             [
@@ -301,14 +406,20 @@ mod tests {
     fn the_trade_date_is_used_rather_than_the_settlement_date() {
         let mut g = grid();
         g[3][0] = text("2/5/2021");
-        assert_eq!(parse(&g, 0).unwrap().unwrap()[0].bought, day(2021, 2, 3));
+        assert_eq!(
+            parse(&g, 0).unwrap().unwrap().purchases[0].bought,
+            day(2021, 2, 3)
+        );
     }
 
     #[test]
     fn a_trade_date_cell_holding_a_date_is_read_as_one() {
         let mut g = grid();
         g[3][1] = Cell::Date(day(2021, 2, 3));
-        assert_eq!(parse(&g, 0).unwrap().unwrap()[0].bought, day(2021, 2, 3));
+        assert_eq!(
+            parse(&g, 0).unwrap().unwrap().purchases[0].bought,
+            day(2021, 2, 3)
+        );
     }
 
     #[test]
@@ -316,7 +427,7 @@ mod tests {
         let mut g = grid();
         g[3][6] = Cell::Number(9.5);
         g[3][7] = Cell::Number(45.5);
-        let p = &parse(&g, 0).unwrap().unwrap()[0];
+        let p = &parse(&g, 0).unwrap().unwrap().purchases[0];
         assert_eq!((p.shares, p.price), (Shares(9_500), Cents(4_550)));
     }
 
@@ -371,7 +482,7 @@ mod tests {
         let mut g = grid();
         g.insert(4, row("2/3/2021", "TDF45", "Buy", "2.5000", "$20.0000"));
         g.insert(5, row("2/3/2021", "TDF45", "Buy", "1.0000", "$21.0000"));
-        let lots = lots(&parse(&g, 0).unwrap().unwrap());
+        let lots = lots(&parse(&g, 0).unwrap().unwrap().purchases);
         assert_eq!(
             lots[..2],
             [
@@ -408,5 +519,105 @@ mod tests {
         let b = lot(a.bought, "TDF45", a.shares, Cents(2_100));
         let (new, skipped) = fresh(vec![a.clone(), b.clone()], &[stored(1, &a)]);
         assert_eq!((new, skipped), (vec![b], 1));
+    }
+
+    fn plan(date: NaiveDate, ticker: &str, shares: Shares) -> DonationInput {
+        DonationInput {
+            ticker: ticker.into(),
+            date,
+            shares,
+            value: None,
+        }
+    }
+
+    fn held(id: i64, p: &DonationInput, value: Option<Cents>) -> Donation {
+        Donation {
+            id: DonationId(id),
+            ticker: p.ticker.clone(),
+            date: p.date,
+            shares: p.shares,
+            value,
+            claimed: false,
+        }
+    }
+
+    #[test]
+    fn an_outgoing_transfer_is_read_with_its_shares_above_zero_and_no_price() {
+        let r = parse(&grid(), 0).unwrap().unwrap();
+        assert_eq!(
+            r.transfers,
+            [Transfer {
+                row: 9,
+                date: day(2025, 5, 12),
+                ticker: "TDF45".into(),
+                shares: Shares::whole(5),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_transfer_quantity_held_as_a_number_is_read() {
+        let mut g = grid();
+        g[8][6] = Cell::Number(-5.0);
+        assert_eq!(
+            parse(&g, 0).unwrap().unwrap().transfers[0].shares,
+            Shares::whole(5)
+        );
+    }
+
+    #[test]
+    fn a_transfer_whose_quantity_is_not_below_zero_is_refused_naming_the_row() {
+        for qty in ["5.0000", "-0.0000"] {
+            let mut g = grid();
+            g[8][6] = text(qty);
+            let err = parse(&g, 0).unwrap_err();
+            assert!(err.to_string().starts_with("row 9:"), "{qty}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_transfer_with_no_ticker_is_refused_naming_the_row() {
+        let mut g = grid();
+        g[8][2] = Cell::Empty;
+        let err = parse(&g, 0).unwrap_err();
+        assert!(err.to_string().starts_with("row 9:"), "{err}");
+    }
+
+    #[test]
+    fn same_day_transfers_of_one_ticker_are_one_plan_and_of_two_tickers_are_two() {
+        let mut g = grid();
+        g.insert(
+            9,
+            row("5/12/2025", "TDF45", "Transfer (outgoing)", "-2.5000", ""),
+        );
+        g.insert(
+            10,
+            row("5/12/2025", "USM", "Transfer (outgoing)", "-1.0000", ""),
+        );
+        let plans = donations(&parse(&g, 0).unwrap().unwrap().transfers);
+        assert_eq!(
+            plans,
+            [
+                plan(day(2025, 5, 12), "TDF45", Shares(7_500)),
+                plan(day(2025, 5, 12), "USM", Shares::whole(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_transfer_already_held_as_a_plan_or_a_recorded_donation_is_skipped() {
+        let a = plan(day(2025, 5, 12), "TDF45", Shares::whole(5));
+        let b = plan(day(2026, 1, 2), "TDF45", Shares::whole(3));
+        let c = plan(day(2026, 2, 2), "USM", Shares::whole(1));
+        let existing = [held(1, &a, None), held(2, &b, Some(Cents(15_000)))];
+        let (new, skipped) = fresh_donations(vec![a, b, c.clone()], &existing);
+        assert_eq!((new, skipped), (vec![c], 2));
+    }
+
+    #[test]
+    fn each_held_donation_accounts_for_only_one_incoming_transfer() {
+        let a = plan(day(2025, 5, 12), "TDF45", Shares::whole(5));
+        let (new, skipped) = fresh_donations(vec![a.clone(), a.clone()], &[held(1, &a, None)]);
+        assert_eq!((new, skipped), (vec![a], 1));
     }
 }

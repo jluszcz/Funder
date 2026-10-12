@@ -8,7 +8,7 @@ use crate::db::Db;
 use anyhow::{Context, Result, bail};
 use calamine::{Data, Reader, Xlsx, open_workbook};
 use chrono::NaiveDate;
-pub use report::{Cell, Purchase};
+pub use report::{Cell, Purchase, Report, Transfer};
 use std::path::Path;
 
 /// What an import wrote, and what it found already held.
@@ -18,10 +18,10 @@ pub struct Summary {
     pub skipped: usize,
 }
 
-/// The purchases on the first sheet with a report's header. A sheet that
+/// The purchases and transfers on the first sheet with a report's header. A sheet that
 /// cannot be read as a worksheet (a chart sheet) is skipped like one without
 /// it.
-pub fn read(path: &Path) -> Result<Vec<Purchase>> {
+pub fn read(path: &Path) -> Result<Report> {
     let mut book: Xlsx<_> =
         open_workbook(path).with_context(|| format!("opening report {}", path.display()))?;
     for name in book.sheet_names() {
@@ -43,7 +43,7 @@ pub fn read(path: &Path) -> Result<Vec<Purchase>> {
 
 /// Read a report and add the lots it holds that the database does not.
 pub fn run(db: &Db, path: &Path) -> Result<Summary> {
-    add_lots(db, &read(path)?)
+    add_lots(db, &read(path)?.purchases)
 }
 
 fn add_lots(db: &Db, purchases: &[Purchase]) -> Result<Summary> {
