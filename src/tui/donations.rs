@@ -1,12 +1,13 @@
 //! The Donations screen: every donation and plan, and the lots the selected
 //! one draws on.
 
-use super::cursor::{Cursor, Scroll, Viewport, impl_scroll};
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::table::{self, Column};
 use super::{viewport, visible_rows};
 use crate::money::Cents;
 use crate::shares::Shares;
 use crate::summary::{DonationRow, LineRow};
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};

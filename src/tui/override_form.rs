@@ -1,7 +1,7 @@
 //! The override: every lot a donation could draw on, and the shares to take
 //! from each, typed by hand.
 
-use super::cursor::{Cursor, Scroll, Viewport, impl_scroll, scroll_key};
+use super::cursor::{Cursor, Scroll, Viewport, scroll_key};
 use super::form::Outcome;
 use super::text::{Edit, TextBuffer, edit_key, is_bare};
 use super::{centered, viewport};
@@ -12,6 +12,7 @@ use crate::donate;
 use crate::id::DonationId;
 use crate::shares::Shares;
 use anyhow::{Context, Result, ensure};
+use jluszcz_finance_utils::impl_scroll;
 use ratatui::Frame;
 use ratatui::crossterm::event::{KeyCode, KeyEvent};
 use ratatui::layout::Rect;
