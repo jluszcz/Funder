@@ -1,8 +1,13 @@
 //! The Lots screen: every lot, what is left of it, and each ticker's totals.
 
+use super::cursor::{Cursor, Scroll, Viewport};
 use super::help;
+use super::search::{Search, SearchBox};
 use super::table::{self, Column};
+use super::viewport;
+use crate::id::LotId;
 use crate::money::Cents;
+use crate::shares::Shares;
 use crate::summary::{LotRow, Lots, TickerSummary};
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -12,11 +17,97 @@ use ratatui::widgets::Paragraph;
 
 #[derive(Debug, Default)]
 pub(super) struct LotsView {
-    pub(super) selected: usize,
+    pub(super) cursor: Cursor,
+    search: SearchBox,
     /// Whether lots with nothing left are shown; they are hidden by default.
     pub(super) show_all: bool,
     /// How many lots have nothing left, whether shown or not.
     pub(super) used_up: usize,
+    /// Every lot and ticker, as the database holds them.
+    held: Lots,
+    /// What is drawn: `held` less the lots `show_all` hides and the search
+    /// does not match.
+    pub(super) lots: Lots,
+}
+
+impl LotsView {
+    /// Take a fresh read of the lots, keeping the selection on its lot.
+    pub(super) fn load(&mut self, held: Lots) {
+        self.used_up = held.rows.iter().filter(|r| r.left <= Shares::ZERO).count();
+        self.held = held;
+        self.refilter();
+    }
+
+    /// Every ticker held, whatever the search narrows the drawn lines to.
+    pub(super) fn tickers(&self) -> &[TickerSummary] {
+        &self.held.tickers
+    }
+
+    pub(super) fn selected(&self) -> Option<&LotRow> {
+        self.lots.rows.get(self.cursor.index())
+    }
+
+    /// Selects the lot when it is shown; otherwise the selection stays put.
+    pub(super) fn select(&mut self, id: LotId) {
+        if let Some(i) = self.lots.rows.iter().position(|r| r.lot.id == id) {
+            self.cursor.select(i);
+        }
+    }
+}
+
+impl Scroll for LotsView {
+    fn cursor(&self) -> &Cursor {
+        &self.cursor
+    }
+
+    fn cursor_mut(&mut self) -> &mut Cursor {
+        &mut self.cursor
+    }
+
+    fn row_count(&self) -> usize {
+        self.lots.rows.len()
+    }
+}
+
+/// A lot is found by its purchase date and ticker, as the table draws them.
+impl Search for LotsView {
+    fn search_box(&self) -> &SearchBox {
+        &self.search
+    }
+
+    fn search_box_mut(&mut self) -> &mut SearchBox {
+        &mut self.search
+    }
+
+    /// A ticker's line stays while any of its lots is drawn, or while nothing
+    /// is being searched for: with every lot used up, the lines are all the
+    /// screen has left to say.
+    fn refilter(&mut self) {
+        let selected = self.selected().map(|r| r.lot.id);
+        let matcher = self.matcher();
+        let rows: Vec<LotRow> = self
+            .held
+            .rows
+            .iter()
+            .filter(|r| self.show_all || r.left > Shares::ZERO)
+            .filter(|r| matcher.matches(&format!("{} {}", r.lot.bought, r.lot.ticker), &[]))
+            .cloned()
+            .collect();
+        let tickers = self
+            .held
+            .tickers
+            .iter()
+            .filter(|t| self.search().is_empty() || rows.iter().any(|r| r.lot.ticker == t.ticker))
+            .cloned()
+            .collect();
+        self.lots = Lots { rows, tickers };
+        self.cursor.clamp(self.lots.rows.len());
+        // A lot dropped above the selected one would otherwise shift the
+        // selection onto its neighbour.
+        if let Some(id) = selected {
+            self.select(id);
+        }
+    }
 }
 
 /// The footer's item for `s`, counting the lots it would show or hide;
@@ -102,10 +193,17 @@ fn ticker_line(t: &TickerSummary, width: usize) -> String {
     .unwrap_or_else(|| format!("{head}{rest}"))
 }
 
-pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView, lots: &Lots) {
+/// Returns the [`Viewport`] it drew, which `App` records on the view.
+pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView) -> Viewport {
+    let lots = &view.lots;
     if lots.rows.is_empty() && lots.tickers.is_empty() {
-        frame.render_widget(Paragraph::new("No lots yet: a adds one"), area);
-        return;
+        let empty = if view.search().is_empty() {
+            "No lots yet: a adds one"
+        } else {
+            "No lot matches: Esc clears the search"
+        };
+        frame.render_widget(Paragraph::new(empty), area);
+        return Viewport::of_height(usize::from(area.height));
     }
     let width = usize::from(area.width);
     let (header, rows) = table(&lots.rows, width);
@@ -113,7 +211,9 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView, lots: &Lots
     let room = usize::from(area.height)
         .saturating_sub(2 + lots.tickers.len())
         .max(1);
-    let offset = view.selected.saturating_sub(room - 1);
+    let viewport = viewport(view, lots.rows.len(), room);
+    let offset = viewport.offset;
+    let selected = view.selected_index();
     // With every lot hidden there is no table, only the tickers.
     let mut lines = Vec::new();
     if !lots.rows.is_empty() {
@@ -127,7 +227,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView, lots: &Lots
                 .skip(offset)
                 .take(room)
                 .map(|(i, r)| {
-                    let style = if i == view.selected {
+                    let style = if i == selected {
                         Style::new().add_modifier(Modifier::REVERSED)
                     } else {
                         Style::new()
@@ -143,6 +243,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView, lots: &Lots
             .map(|t| Line::from(ticker_line(t, width))),
     );
     frame.render_widget(Paragraph::new(lines), area);
+    viewport
 }
 
 #[cfg(test)]

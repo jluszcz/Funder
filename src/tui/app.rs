@@ -1,17 +1,18 @@
 //! `App`: which screen is showing, the status line, and where each key goes.
 
+use super::cursor::{Scroll, scroll_key};
 use super::donations::{self, DonationsView};
 use super::form::{self, Field, Form, Outcome};
 use super::help;
 use super::lots::{self, LotsView};
 use super::override_form::{self, OverrideForm};
 use super::plan_form::PlanForm;
+use super::search::{self, Search};
 use super::text::is_bare;
 use crate::db::{Db, DonationInput, NewLot};
 use crate::donate;
 use crate::id::{DonationId, LotId};
-use crate::shares::Shares;
-use crate::summary::{self, DonationRow, LotRow, Lots};
+use crate::summary::{self, DonationRow, LotRow};
 use anyhow::{Result, ensure};
 use chrono::NaiveDate;
 use jluszcz_finance_utils::tui::help::Entry;
@@ -48,6 +49,10 @@ pub(super) enum Modal {
     Override(OverrideForm),
 }
 
+/// The Lots title up to the needle; the search box's caret is drawn this
+/// many characters into the title.
+const LOTS_SEARCH_TITLE: &str = " Lots · /";
+
 const LOT_BOUGHT: usize = 0;
 const LOT_TICKER: usize = 1;
 const LOT_SHARES: usize = 2;
@@ -63,8 +68,6 @@ pub(super) struct App {
     pub(super) modal: Option<Modal>,
     pub(super) status: StatusLine,
     quit: bool,
-    pub(super) lots: Lots,
-    pub(super) donations: Vec<DonationRow>,
 }
 
 impl App {
@@ -79,11 +82,6 @@ impl App {
             modal: None,
             status: StatusLine::default(),
             quit: false,
-            lots: Lots {
-                rows: Vec::new(),
-                tickers: Vec::new(),
-            },
-            donations: Vec::new(),
         };
         app.reload()?;
         Ok(app)
@@ -98,31 +96,10 @@ impl App {
     }
 
     fn reload(&mut self) -> Result<()> {
-        let selected = self.selected_lot().map(|r| r.lot.id);
-        self.lots = summary::lots(&self.db, self.today)?;
-        self.lots_view.used_up = self
-            .lots
-            .rows
-            .iter()
-            .filter(|r| r.left <= Shares::ZERO)
-            .count();
-        if !self.lots_view.show_all {
-            self.lots.rows.retain(|r| r.left > Shares::ZERO);
-        }
-        self.donations = summary::donations(&self.db)?;
-        self.donations_view.selected = self
-            .donations_view
-            .selected
-            .min(self.donations.len().saturating_sub(1));
-        self.lots_view.selected = self
-            .lots_view
-            .selected
-            .min(self.lots.rows.len().saturating_sub(1));
-        // A lot hidden above the selected one would otherwise shift the
-        // selection onto its neighbour.
-        if let Some(id) = selected {
-            self.select_lot(id);
-        }
+        self.lots_view.load(summary::lots(&self.db, self.today)?);
+        self.donations_view.rows = summary::donations(&self.db)?;
+        let len = self.donations_view.rows.len();
+        self.donations_view.cursor.clamp(len);
         Ok(())
     }
 
@@ -130,6 +107,16 @@ impl App {
         if self.help {
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('?') | KeyCode::F(1)) {
                 self.help = false;
+            }
+            return Ok(());
+        }
+        // An open search box takes every key but F1, `?` included: a search
+        // may be for one.
+        if self.is_searching_lots() {
+            if key.code == KeyCode::F(1) {
+                self.help = true;
+            } else {
+                search::search_key(&mut self.lots_view, key);
             }
             return Ok(());
         }
@@ -155,24 +142,21 @@ impl App {
         Ok(())
     }
 
-    /// Selects the lot when it is shown; otherwise the selection stays put.
     fn select_lot(&mut self, id: LotId) {
-        if let Some(i) = self.lots.rows.iter().position(|r| r.lot.id == id) {
-            self.lots_view.selected = i;
-        }
+        self.lots_view.select(id);
     }
 
     fn selected_lot(&self) -> Option<&LotRow> {
-        self.lots.rows.get(self.lots_view.selected)
+        self.lots_view.selected()
     }
 
     fn lots_key(&mut self, key: KeyEvent) -> Result<()> {
-        let last = self.lots.rows.len().saturating_sub(1);
         match key.code {
-            KeyCode::Up => self.lots_view.selected = self.lots_view.selected.saturating_sub(1),
-            KeyCode::Down => self.lots_view.selected = (self.lots_view.selected + 1).min(last),
-            KeyCode::Home => self.lots_view.selected = 0,
-            KeyCode::End => self.lots_view.selected = last,
+            code if scroll_key(&mut self.lots_view, code) => {}
+            KeyCode::Char('/') => self.lots_view.begin_search(),
+            KeyCode::Esc => {
+                search::escape_kept_filter(&mut self.lots_view);
+            }
             KeyCode::Char('a') => {
                 let ticker = self
                     .selected_lot()
@@ -222,6 +206,7 @@ impl App {
                 if let Some(r) = self.selected_lot() {
                     let ticker = r.lot.ticker.clone();
                     let current = self
+                        .lots_view
                         .lots
                         .tickers
                         .iter()
@@ -243,25 +228,18 @@ impl App {
     }
 
     fn selected_donation(&self) -> Option<&DonationRow> {
-        self.donations.get(self.donations_view.selected)
+        let view = &self.donations_view;
+        view.rows.get(view.selected_index())
     }
 
     fn donations_key(&mut self, key: KeyEvent) -> Result<()> {
-        let last = self.donations.len().saturating_sub(1);
         match key.code {
-            KeyCode::Up => {
-                self.donations_view.selected = self.donations_view.selected.saturating_sub(1)
-            }
-            KeyCode::Down => {
-                self.donations_view.selected = (self.donations_view.selected + 1).min(last)
-            }
-            KeyCode::Home => self.donations_view.selected = 0,
-            KeyCode::End => self.donations_view.selected = last,
+            code if scroll_key(&mut self.donations_view, code) => {}
             KeyCode::Char('n') => {
                 let ticker = self
                     .selected_donation()
                     .map(|r| r.donation.ticker.clone())
-                    .or_else(|| self.lots.tickers.first().map(|t| t.ticker.clone()))
+                    .or_else(|| self.lots_view.tickers().first().map(|t| t.ticker.clone()))
                     .unwrap_or_default();
                 self.modal = Some(Modal::Plan(PlanForm::new(&self.db, &ticker, self.today)));
             }
@@ -333,8 +311,9 @@ impl App {
     }
 
     fn select_donation(&mut self, id: DonationId) {
-        if let Some(i) = self.donations.iter().position(|r| r.donation.id == id) {
-            self.donations_view.selected = i;
+        let view = &mut self.donations_view;
+        if let Some(i) = view.rows.iter().position(|r| r.donation.id == id) {
+            view.cursor.select(i);
         }
     }
 
@@ -493,11 +472,22 @@ impl App {
         Ok(())
     }
 
-    fn title(&self) -> &'static str {
+    /// The Lots title carries the needle while one narrows the list, the
+    /// way MisterManager's screens do.
+    fn title(&self) -> String {
         match self.screen {
-            Screen::Lots => " Lots ",
-            Screen::Donations => " Donations ",
+            Screen::Lots
+                if !self.lots_view.search().is_empty() || self.lots_view.is_searching() =>
+            {
+                format!("{}{} ", LOTS_SEARCH_TITLE, self.lots_view.search())
+            }
+            Screen::Lots => " Lots ".to_string(),
+            Screen::Donations => " Donations ".to_string(),
         }
+    }
+
+    fn is_searching_lots(&self) -> bool {
+        self.modal.is_none() && self.screen == Screen::Lots && self.lots_view.is_searching()
     }
 
     fn footer(&self) -> Paragraph<'static> {
@@ -506,7 +496,11 @@ impl App {
             Some(s) => Paragraph::new(s.text.clone()),
             None => {
                 let mut items = help::footer_items(&self.footer_tables());
-                if !self.help && self.modal.is_none() && self.screen == Screen::Lots {
+                if !self.help
+                    && self.modal.is_none()
+                    && self.screen == Screen::Lots
+                    && !self.is_searching_lots()
+                {
                     // `s` sits between the screen's keys and the global ones.
                     let at = help::footer_items(&[help::LOTS]).len();
                     items.splice(at..at, lots::toggle_item(&self.lots_view));
@@ -529,6 +523,7 @@ impl App {
             ) => vec![help::FORM],
             (Some(Modal::Override(_)), _) => vec![help::OVERRIDE],
             (Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)), _) => vec![help::CONFIRM],
+            (None, Screen::Lots) if self.lots_view.is_searching() => vec![help::SEARCH],
             (None, Screen::Lots) => vec![help::LOTS, help::GLOBAL],
             (None, Screen::Donations) => vec![help::DONATIONS, help::GLOBAL],
         }
@@ -545,6 +540,9 @@ impl App {
         }
         if matches!(self.modal, Some(Modal::Override(_))) {
             topics.push(("Override", help::OVERRIDE));
+        }
+        if self.is_searching_lots() {
+            topics.push(("Search", help::SEARCH));
         }
         match self.screen {
             Screen::Lots => topics.push(("Lots", help::LOTS)),
@@ -582,18 +580,36 @@ impl jluszcz_finance_utils::tui::app::App for App {
         let block = Block::bordered().title(self.title());
         let inner = block.inner(body);
         frame.render_widget(block, body);
+        // The event loop draws before every key it reads, so the viewport a
+        // key pages by is never stale.
         match self.screen {
-            Screen::Lots => lots::render(frame, inner, &self.lots_view, &self.lots),
+            Screen::Lots => {
+                let viewport = lots::render(frame, inner, &self.lots_view);
+                self.lots_view.record_viewport(viewport);
+            }
             Screen::Donations => {
-                donations::render(frame, inner, &self.donations_view, &self.donations)
+                let viewport = donations::render(frame, inner, &self.donations_view);
+                self.donations_view.record_viewport(viewport);
             }
         }
-        match &self.modal {
+        if let Some(caret) = self.lots_view.search_box().caret()
+            && self.is_searching_lots()
+        {
+            let at = LOTS_SEARCH_TITLE.chars().count() + caret;
+            frame.set_cursor_position((
+                (body.x + 1 + at as u16).min(body.right().saturating_sub(2)),
+                body.y,
+            ));
+        }
+        match &mut self.modal {
             Some(
                 Modal::Lot { form, .. } | Modal::Price { form, .. } | Modal::Record { form, .. },
             ) => form::render(frame, body, form, &[]),
             Some(Modal::Plan(plan)) => form::render(frame, body, &plan.form, &plan.notes()),
-            Some(Modal::Override(o)) => override_form::render(frame, body, o),
+            Some(Modal::Override(o)) => {
+                let viewport = override_form::render(frame, body, o);
+                o.record_viewport(viewport);
+            }
             Some(Modal::DeleteLot(_) | Modal::DeleteDonation(_)) | None => {}
         }
         if self.help {
@@ -632,6 +648,7 @@ mod tests {
     use super::*;
     use crate::calc::select::Pick;
     use crate::db::DonationInput;
+    use crate::shares::Shares;
     use crate::tui::donations::tests::app_with_donation;
     use crate::tui::test_support::{app, ctrl, day, press, screen, today, type_text};
     use jluszcz_finance_utils::tui::app::App as _;
@@ -749,6 +766,7 @@ mod tests {
             app.status.message().map(|s| &s.text)
         );
         let saved = app
+            .lots_view
             .lots
             .rows
             .iter()
@@ -756,7 +774,10 @@ mod tests {
             .unwrap();
         assert_eq!(saved.lot.shares, Shares::whole(5));
         assert_eq!(saved.lot.ticker, "TDF45");
-        assert_eq!(app.lots.rows[app.lots_view.selected].lot.id, saved.lot.id);
+        assert_eq!(
+            app.lots_view.lots.rows[app.lots_view.cursor.index()].lot.id,
+            saved.lot.id
+        );
     }
 
     #[test]
@@ -772,6 +793,7 @@ mod tests {
         type_text(&mut app, "80");
         press(&mut app, KeyCode::Enter);
         let usm = app
+            .lots_view
             .lots
             .rows
             .iter()
@@ -805,7 +827,7 @@ mod tests {
         press(&mut app, KeyCode::Char('a'));
         press(&mut app, KeyCode::Esc);
         assert!(app.modal.is_none());
-        assert_eq!(app.lots.rows.len(), 3);
+        assert_eq!(app.lots_view.lots.rows.len(), 3);
     }
 
     #[test]
@@ -818,7 +840,10 @@ mod tests {
         app.on_key(ctrl('u'));
         type_text(&mut app, "21");
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.lots.rows[0].lot.price, crate::money::Cents(2_100));
+        assert_eq!(
+            app.lots_view.lots.rows[0].lot.price,
+            crate::money::Cents(2_100)
+        );
     }
 
     #[test]
@@ -828,7 +853,13 @@ mod tests {
         press(&mut app, KeyCode::Char('p'));
         type_text(&mut app, "95");
         press(&mut app, KeyCode::Enter);
-        let usm = app.lots.tickers.iter().find(|t| t.ticker == "USM").unwrap();
+        let usm = app
+            .lots_view
+            .lots
+            .tickers
+            .iter()
+            .find(|t| t.ticker == "USM")
+            .unwrap();
         assert_eq!(
             usm.price.as_ref().unwrap().price,
             crate::money::Cents(9_500)
@@ -841,9 +872,9 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('d'));
         assert!(app.status.message().unwrap().text.contains("y to confirm"));
-        assert_eq!(app.lots.rows.len(), 3);
+        assert_eq!(app.lots_view.lots.rows.len(), 3);
         press(&mut app, KeyCode::Char('y'));
-        assert_eq!(app.lots.rows.len(), 2);
+        assert_eq!(app.lots_view.lots.rows.len(), 2);
     }
 
     #[test]
@@ -851,13 +882,13 @@ mod tests {
         let mut app = app();
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('n'));
-        assert_eq!(app.lots.rows.len(), 3);
+        assert_eq!(app.lots_view.lots.rows.len(), 3);
     }
 
     #[test]
     fn deleting_a_donated_lot_is_refused_before_asking() {
         let mut app = app();
-        let lot = app.lots.rows[0].lot.id;
+        let lot = app.lots_view.lots.rows[0].lot.id;
         app.db
             .write_donation(
                 None,
@@ -926,7 +957,7 @@ mod tests {
             "{:?}",
             app.status.message().map(|s| &s.text)
         );
-        let plan = &app.donations[app.donations_view.selected];
+        let plan = &app.donations_view.rows[app.donations_view.cursor.index()];
         assert!(plan.donation.is_plan());
         assert_eq!(plan.donation.shares, Shares::whole(12));
         assert_eq!(plan.lines[0].lot.bought, day(2021, 1, 10));
@@ -948,7 +979,7 @@ mod tests {
             "{:?}",
             app.status.message().map(|s| &s.text)
         );
-        let d = &app.donations[app.donations_view.selected].donation;
+        let d = &app.donations_view.rows[app.donations_view.cursor.index()].donation;
         assert_eq!(d.value, Some(crate::money::Cents(62_400)));
         assert_eq!(d.date, today());
     }
@@ -1014,7 +1045,7 @@ mod tests {
             app.status.message().unwrap().text,
             "Recorded the donation of 2026-01-05"
         );
-        let lines = &app.donations[app.donations_view.selected].lines;
+        let lines = &app.donations_view.rows[app.donations_view.cursor.index()].lines;
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].lot.bought, day(2020, 1, 10));
     }
@@ -1040,7 +1071,7 @@ mod tests {
     fn c_marks_a_recorded_donation_claimed_and_refuses_a_plan() {
         let mut app = app_with_donation();
         press(&mut app, KeyCode::Char('c'));
-        assert!(app.donations[0].donation.claimed);
+        assert!(app.donations_view.rows[0].donation.claimed);
         press(&mut app, KeyCode::Char('n'));
         type_text(&mut app, "100");
         press(&mut app, KeyCode::Enter);
@@ -1061,8 +1092,8 @@ mod tests {
         let mut app = app_with_donation();
         press(&mut app, KeyCode::Char('d'));
         press(&mut app, KeyCode::Char('y'));
-        assert!(app.donations.is_empty());
-        assert_eq!(app.lots.rows[0].left, Shares::whole(10));
+        assert!(app.donations_view.rows.is_empty());
+        assert_eq!(app.lots_view.lots.rows[0].left, Shares::whole(10));
     }
 
     #[test]
@@ -1095,7 +1126,7 @@ mod tests {
         press(&mut app, KeyCode::Tab);
         type_text(&mut app, "100");
         press(&mut app, KeyCode::Enter);
-        let lines = &app.donations[app.donations_view.selected].lines;
+        let lines = &app.donations_view.rows[app.donations_view.cursor.index()].lines;
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].lot.bought, day(2020, 1, 10));
         assert!(lines[0].manual);
@@ -1124,5 +1155,195 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         assert!(matches!(app.modal, Some(Modal::Override(_))));
         assert!(app.status.message().unwrap().error);
+    }
+
+    /// Forty TDF45 lots, two shares each, bought a day apart from 2020-01-01,
+    /// and a recorded one-share donation from each of the first thirty.
+    fn app_with_many_lots_and_donations() -> App {
+        let db = crate::db::open_in_memory().unwrap();
+        let first = day(2020, 1, 1);
+        for i in 0..40 {
+            db.insert_lot(&NewLot {
+                ticker: "TDF45".into(),
+                bought: first + chrono::Days::new(i),
+                shares: Shares::whole(2),
+                price: crate::money::Cents(1_000),
+            })
+            .unwrap();
+        }
+        for (i, lot) in db.lots().unwrap().into_iter().take(30).enumerate() {
+            db.write_donation(
+                None,
+                &DonationInput {
+                    ticker: "TDF45".into(),
+                    date: day(2026, 1, 1) + chrono::Days::new(i as u64),
+                    shares: Shares::whole(1),
+                    value: Some(crate::money::Cents(5_000)),
+                },
+                &[Pick {
+                    lot: lot.id,
+                    shares: Shares::whole(1),
+                    manual: true,
+                }],
+            )
+            .unwrap();
+        }
+        App::new(db, today()).unwrap()
+    }
+
+    #[test]
+    fn page_down_and_up_move_the_lots_selection_by_a_screenful() {
+        let mut app = app_with_many_lots_and_donations();
+        screen(&mut app, 120, 20);
+        press(&mut app, KeyCode::PageDown);
+        let page = app.lots_view.cursor.page_height();
+        assert!(page > 1, "{page}");
+        assert_eq!(app.lots_view.cursor.index(), page);
+        press(&mut app, KeyCode::PageUp);
+        assert_eq!(app.lots_view.cursor.index(), 0);
+    }
+
+    #[test]
+    fn page_down_past_the_end_stops_on_the_last_lot() {
+        let mut app = app_with_many_lots_and_donations();
+        for _ in 0..10 {
+            screen(&mut app, 120, 20);
+            press(&mut app, KeyCode::PageDown);
+        }
+        assert_eq!(
+            app.lots_view.cursor.index(),
+            app.lots_view.lots.rows.len() - 1
+        );
+        assert!(screen(&mut app, 120, 20).contains("2020-02-09"));
+    }
+
+    #[test]
+    fn page_down_and_up_move_the_donations_selection_by_a_screenful() {
+        let mut app = on_donations(app_with_many_lots_and_donations());
+        screen(&mut app, 120, 30);
+        press(&mut app, KeyCode::PageDown);
+        let page = app.donations_view.cursor.page_height();
+        assert!(page > 1, "{page}");
+        assert_eq!(app.donations_view.cursor.index(), page);
+        press(&mut app, KeyCode::PageUp);
+        assert_eq!(app.donations_view.cursor.index(), 0);
+    }
+
+    #[test]
+    fn page_down_moves_the_override_selection_by_a_screenful() {
+        let mut app = on_donations(app_with_many_lots_and_donations());
+        press(&mut app, KeyCode::Char('o'));
+        screen(&mut app, 120, 30);
+        press(&mut app, KeyCode::PageDown);
+        let Some(Modal::Override(o)) = &app.modal else {
+            panic!("the override closed");
+        };
+        assert!(o.selected_index() > 1, "{}", o.selected_index());
+    }
+
+    #[test]
+    fn slash_narrows_the_lots_to_a_ticker_as_it_is_typed() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "us");
+        let text = screen(&mut app, 120, 20);
+        assert!(text.contains("2026-03-01"), "{text}");
+        assert!(!text.contains("2020-01-10"), "{text}");
+        assert!(text.contains("Lots · /us"), "{text}");
+    }
+
+    #[test]
+    fn slash_narrows_the_lots_to_a_purchase_date() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "2021-01");
+        let text = screen(&mut app, 120, 20);
+        assert!(text.contains("2021-01-10"), "{text}");
+        assert!(!text.contains("2020-01-10"), "{text}");
+        assert!(!text.contains("2026-03-01"), "{text}");
+    }
+
+    #[test]
+    fn only_the_tickers_with_a_matching_lot_keep_their_total_line() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "usm");
+        let text = screen(&mut app, 120, 20);
+        assert!(!text.contains("TDF45 @"), "{text}");
+        assert!(text.contains("USM"), "{text}");
+    }
+
+    #[test]
+    fn enter_keeps_the_filter_for_the_lot_keys_and_esc_then_clears_it() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "usm");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Char('e'));
+        let Some(Modal::Lot { form, .. }) = &app.modal else {
+            panic!("e opened no lot form");
+        };
+        assert_eq!(form.text(LOT_TICKER), "USM");
+        press(&mut app, KeyCode::Esc); // closes the form
+        assert_eq!(app.lots_view.lots.rows.len(), 1);
+        press(&mut app, KeyCode::Esc); // clears the kept filter
+        assert_eq!(app.lots_view.lots.rows.len(), 3);
+        assert!(!screen(&mut app, 120, 20).contains("/usm"));
+    }
+
+    #[test]
+    fn esc_in_the_box_abandons_the_filter() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "usm");
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.lots_view.lots.rows.len(), 3);
+        press(&mut app, KeyCode::Char('q'));
+        assert!(app.should_quit(), "q went to the box after Esc closed it");
+    }
+
+    #[test]
+    fn the_open_box_takes_the_screens_letters_and_a_question_mark() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "q?");
+        assert!(!app.should_quit());
+        assert!(!app.help);
+        assert!(screen(&mut app, 120, 20).contains("/q?"));
+    }
+
+    #[test]
+    fn a_lot_still_matching_stays_selected_as_the_filter_changes() {
+        let mut app = app();
+        press(&mut app, KeyCode::End); // the USM lot
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "u");
+        assert_eq!(app.selected_lot().unwrap().lot.ticker, "USM");
+        press(&mut app, KeyCode::Backspace);
+        assert_eq!(app.selected_lot().unwrap().lot.ticker, "USM");
+    }
+
+    #[test]
+    fn the_footer_shows_the_box_keys_while_it_is_open() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        let text = screen(&mut app, 120, 20);
+        let footer = text.lines().last().unwrap();
+        assert!(footer.contains("Enter keep"), "{footer}");
+        assert!(footer.contains("Esc clear"), "{footer}");
+    }
+
+    #[test]
+    fn a_kept_lots_filter_does_not_change_the_ticker_a_new_plan_opens_on() {
+        let mut app = app();
+        press(&mut app, KeyCode::Char('/'));
+        type_text(&mut app, "usm");
+        press(&mut app, KeyCode::Enter);
+        let mut app = on_donations(app);
+        press(&mut app, KeyCode::Char('n'));
+        let Some(Modal::Plan(plan)) = &app.modal else {
+            panic!("n opened no plan form");
+        };
+        assert_eq!(plan.form.text(crate::tui::plan_form::TICKER), "TDF45");
     }
 }

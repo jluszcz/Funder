@@ -1,9 +1,10 @@
 //! The override: every lot a donation could draw on, and the shares to take
 //! from each, typed by hand.
 
-use super::centered;
+use super::cursor::{Cursor, Scroll, Viewport, impl_scroll, scroll_key};
 use super::form::Outcome;
 use super::text::{Edit, TextBuffer, edit_key, is_bare};
+use super::{centered, viewport};
 use crate::calc::select::{Candidate, Pick};
 use crate::calc::term::is_long_term;
 use crate::db::{Db, Donation};
@@ -29,11 +30,13 @@ pub(super) struct Row {
 pub(super) struct OverrideForm {
     pub(super) donation: Donation,
     pub(super) rows: Vec<Row>,
-    pub(super) selected: usize,
+    cursor: Cursor,
     /// Whether the selected row is as it was when the selection reached it:
     /// a character typed then replaces its shares instead of appending.
     fresh: bool,
 }
+
+impl_scroll!(OverrideForm, rows);
 
 impl OverrideForm {
     /// Every lot of the ticker bought by the donation's date with shares to
@@ -76,7 +79,7 @@ impl OverrideForm {
         Ok(OverrideForm {
             donation,
             rows,
-            selected: 0,
+            cursor: Cursor::new(),
             fresh: true,
         })
     }
@@ -85,16 +88,14 @@ impl OverrideForm {
         match key.code {
             KeyCode::Esc => return Ok(Outcome::Cancel),
             KeyCode::Enter => return Ok(Outcome::Submit),
-            KeyCode::Up => self.select(self.selected.saturating_sub(1)),
-            KeyCode::Down => self.select(self.selected + 1),
-            KeyCode::Home => self.select(0),
-            KeyCode::End => self.select(self.rows.len()),
+            code if scroll_key(self, code) => self.fresh = true,
             KeyCode::Char('A') if is_bare(key) => {
                 self.automatic(db)?;
                 self.fresh = true;
             }
             _ => {
-                if let Some(row) = self.rows.get_mut(self.selected) {
+                let selected = self.selected_index();
+                if let Some(row) = self.rows.get_mut(selected) {
                     match key.code {
                         KeyCode::Left if is_bare(key) => {
                             row.text.step(-1);
@@ -124,12 +125,6 @@ impl OverrideForm {
             }
         }
         Ok(Outcome::Continue)
-    }
-
-    /// Select row `i`, or the last row past the end.
-    fn select(&mut self, i: usize) {
-        self.selected = i.min(self.rows.len().saturating_sub(1));
-        self.fresh = true;
     }
 
     fn automatic(&mut self, db: &Db) -> Result<()> {
@@ -178,7 +173,8 @@ impl OverrideForm {
     }
 }
 
-pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
+/// Returns the [`Viewport`] it drew, which `App` records on the form.
+pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) -> Viewport {
     let what = if o.donation.is_plan() {
         "plan"
     } else {
@@ -191,7 +187,9 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
     ))];
     // Header, blank, and the total stay pinned; the border takes two more.
     let room = usize::from(area.height).saturating_sub(5).max(1);
-    let offset = o.selected.saturating_sub(room - 1);
+    let selected = o.selected_index();
+    let viewport = viewport(o, o.rows.len(), room);
+    let offset = viewport.offset;
     lines.extend(
         o.rows
             .iter()
@@ -199,7 +197,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
             .skip(offset)
             .take(room)
             .map(|(i, r)| {
-                let marker = if i == o.selected { "›" } else { " " };
+                let marker = if i == selected { "›" } else { " " };
                 let term = match (r.long_term, r.losing) {
                     (true, false) => "LT",
                     (true, true) => "LT loss",
@@ -241,14 +239,15 @@ pub(super) fn render(frame: &mut Frame, area: Rect, o: &OverrideForm) {
         Paragraph::new(lines).block(Block::bordered().title(title)),
         popup,
     );
-    if let Some(r) = o.rows.get(o.selected) {
+    if let Some(r) = o.rows.get(selected) {
         // Marker, date, two right-aligned columns, the term, and the gaps between.
         let x = popup.x + 1 + (2 + 10 + 1 + 9 + 1 + 8 + 2 + 7 + 1 + r.text.caret()) as u16;
         frame.set_cursor_position((
             x.min(popup.right().saturating_sub(2)),
-            popup.y + 2 + (o.selected - offset) as u16,
+            popup.y + 2 + (selected - offset) as u16,
         ));
     }
+    viewport
 }
 
 #[cfg(test)]
@@ -348,9 +347,9 @@ mod tests {
         let id = plan(&db, 12);
         let mut o = OverrideForm::open(&db, id).unwrap();
         o.on_key(key(KeyCode::End), &db).unwrap();
-        assert_eq!(o.selected, 1);
+        assert_eq!(o.selected_index(), 1);
         o.on_key(key(KeyCode::Home), &db).unwrap();
-        assert_eq!(o.selected, 0);
+        assert_eq!(o.selected_index(), 0);
     }
 
     #[test]
@@ -397,7 +396,9 @@ mod tests {
             o.on_key(key(KeyCode::Down), &db).unwrap();
         }
         let area = Rect::new(0, 0, 120, 23);
-        let text = draw(120, 24, |f| render(f, area, &o));
+        let text = draw(120, 24, |f| {
+            render(f, area, &o);
+        });
         assert!(text.contains("›"), "{text}");
         assert!(text.contains("Taking"), "{text}");
         assert!(text.contains("Bought"), "{text}");
@@ -446,7 +447,9 @@ mod tests {
         let id = crate::donate::save_plan(&db, "USM", Shares::whole(5), today()).unwrap();
         let o = OverrideForm::open(&db, id).unwrap();
         let area = Rect::new(0, 0, 120, 23);
-        let buffer = draw_buffer(120, 24, |f| render(f, area, &o));
+        let buffer = draw_buffer(120, 24, |f| {
+            render(f, area, &o);
+        });
         let text = buffer_text(&buffer);
         assert!(text.contains("ST loss"), "{text}");
         let y = (0..24)
@@ -468,7 +471,9 @@ mod tests {
         let mut o = OverrideForm::open(&db, id).unwrap();
         o.rows[0].text.set("11");
         let area = Rect::new(0, 0, 120, 23);
-        let text = draw(120, 24, |f| render(f, area, &o));
+        let text = draw(120, 24, |f| {
+            render(f, area, &o);
+        });
         assert!(text.contains("available"), "{text}");
         assert!(!text.contains("does not parse"), "{text}");
     }
