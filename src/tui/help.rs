@@ -8,6 +8,7 @@ pub(super) use jluszcz_finance_utils::tui::help::render_panel as render;
 pub(super) const GLOBAL: &[Entry] = &[
     Entry::own("1", "lots", "Show the Lots"),
     Entry::own("2", "donations", "Show the Donations"),
+    Entry::own("3", "funds", "Show the Funds"),
     Entry::own("?", "help", "Open this panel (F1 too)"),
     Entry::own("q", "quit", "Quit"),
 ];
@@ -33,11 +34,6 @@ pub(super) const LOTS: &[Entry] = &[
         "Filter the lots by purchase date or ticker as you type -- 2021-03 finds the lots bought that month. Enter keeps the filter and leaves the box; Esc clears it.",
     ),
     Entry::hidden("Esc", "Clear a kept search"),
-    Entry::own(
-        "p",
-        "price",
-        "Set today's price for the selected lot's ticker",
-    ),
     SHOW_ALL,
 ];
 
@@ -74,6 +70,17 @@ pub(super) const DONATIONS: &[Entry] = &[
         "d",
         "delete",
         "Delete the selected donation or plan, freeing its shares ('y' confirms)",
+    ),
+];
+
+pub(super) const FUNDS: &[Entry] = &[
+    Entry::hidden("↑/↓", "Select a fund"),
+    Entry::hidden("PgUp/PgDn", "Move the selection a screenful"),
+    Entry::hidden("Home/End", "Select the first or last fund"),
+    Entry::own(
+        "p",
+        "price",
+        "Set today's price for the selected fund, then select the next one",
     ),
 ];
 
@@ -142,7 +149,7 @@ mod tests {
     use jluszcz_finance_utils::tui::help::duplicate_keys;
 
     const ALL: &[&[Entry]] = &[
-        GLOBAL, LOTS, DONATIONS, FORM, OVERRIDE, SEARCH, CONFIRM, HELP,
+        GLOBAL, LOTS, DONATIONS, FUNDS, FORM, OVERRIDE, SEARCH, CONFIRM, HELP,
     ];
 
     #[test]

@@ -162,7 +162,7 @@ mod tests {
         let mut p = PlanForm::new(&db, "USM", today());
         p.on_key(key(KeyCode::Tab), &db);
         type_into(&mut p, &db, "1");
-        assert!(p.notes().join("\n").contains("p on the Lots screen"));
+        assert!(p.notes().join("\n").contains("p on the Funds screen"));
     }
 
     #[test]

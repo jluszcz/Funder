@@ -1,4 +1,4 @@
-//! The rows both screens draw, in neither medium: each lot with what is left
+//! The rows the screens draw, in neither medium: each lot with what is left
 //! of it, each ticker's totals, and each donation with its lines.
 
 use crate::calc::gain::{self, Line, Part, Totals};
