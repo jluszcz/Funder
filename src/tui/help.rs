@@ -14,6 +14,8 @@ pub(super) const GLOBAL: &[Entry] = &[
 
 pub(super) const LOTS: &[Entry] = &[
     Entry::hidden("↑/↓", "Select a lot"),
+    Entry::hidden("PgUp/PgDn", "Move the selection a screenful"),
+    Entry::hidden("Home/End", "Select the first or last lot"),
     Entry::own(
         "a",
         "add",
@@ -25,6 +27,12 @@ pub(super) const LOTS: &[Entry] = &[
         "delete",
         "Delete the selected lot if no donation draws on it ('y' confirms)",
     ),
+    Entry::own(
+        "/",
+        "search",
+        "Filter the lots by purchase date or ticker as you type -- 2021-03 finds the lots bought that month. Enter keeps the filter and leaves the box; Esc clears it.",
+    ),
+    Entry::hidden("Esc", "Clear a kept search"),
     Entry::own(
         "p",
         "price",
@@ -39,6 +47,8 @@ pub(super) const SHOW_ALL: Entry =
 
 pub(super) const DONATIONS: &[Entry] = &[
     Entry::hidden("↑/↓", "Select a donation"),
+    Entry::hidden("PgUp/PgDn", "Move the selection a screenful"),
+    Entry::hidden("Home/End", "Select the first or last donation"),
     Entry::own("n", "plan", "Plan a donation from a dollar target"),
     Entry::own(
         "r",
@@ -78,6 +88,7 @@ pub(super) const FORM: &[Entry] = &[
 
 pub(super) const OVERRIDE: &[Entry] = &[
     Entry::hidden("↑/↓", "Select a lot"),
+    Entry::hidden("PgUp/PgDn", "Move the selection a screenful"),
     Entry::hidden("Home/End", "Select the first or last lot"),
     Entry::hidden(
         "0-9 .",
@@ -94,6 +105,28 @@ pub(super) const OVERRIDE: &[Entry] = &[
     Entry::own("Esc", "cancel", "Close without saving"),
 ];
 
+/// The search box's keys, as MisterManager's search boxes have them.
+pub(super) const SEARCH: &[Entry] = &[
+    Entry::own(
+        "Enter",
+        "keep",
+        "Leave the box and keep the filter, so the row operators stay usable on the narrowed list.",
+    ),
+    Entry::own(
+        "Esc",
+        "clear",
+        "Clear the filter and leave the box. Enter leaves it and keeps the filter instead, and Esc on the screen behind is then what clears a kept one.",
+    ),
+    Entry::hidden(
+        "Backspace",
+        "Delete the character before the caret. Every keystroke that changes the needle re-filters; moving the caret does not.",
+    ),
+    Entry::hidden(
+        "F1",
+        "Open this panel. A question mark types here instead, because a search may legitimately be for one.",
+    ),
+];
+
 pub(super) const CONFIRM: &[Entry] =
     &[Entry::own("y", "confirm", "Confirm; any other key cancels")];
 
@@ -108,7 +141,9 @@ mod tests {
     use super::*;
     use jluszcz_finance_utils::tui::help::duplicate_keys;
 
-    const ALL: &[&[Entry]] = &[GLOBAL, LOTS, DONATIONS, FORM, OVERRIDE, CONFIRM, HELP];
+    const ALL: &[&[Entry]] = &[
+        GLOBAL, LOTS, DONATIONS, FORM, OVERRIDE, SEARCH, CONFIRM, HELP,
+    ];
 
     #[test]
     fn no_table_names_a_key_twice() {

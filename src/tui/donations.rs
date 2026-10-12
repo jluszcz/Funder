@@ -1,7 +1,9 @@
 //! The Donations screen: every donation and plan, and the lots the selected
 //! one draws on.
 
+use super::cursor::{Cursor, Scroll, Viewport, impl_scroll};
 use super::table::{self, Column};
+use super::viewport;
 use crate::money::Cents;
 use crate::shares::Shares;
 use crate::summary::{DonationRow, LineRow};
@@ -13,8 +15,11 @@ use ratatui::widgets::Paragraph;
 
 #[derive(Debug, Default)]
 pub(super) struct DonationsView {
-    pub(super) selected: usize,
+    pub(super) cursor: Cursor,
+    pub(super) rows: Vec<DonationRow>,
 }
+
+impl_scroll!(DonationsView, rows);
 
 const COLUMNS: [Column; 7] = [
     Column::left("Date"),
@@ -102,19 +107,22 @@ fn notes(r: &DonationRow) -> Vec<String> {
     notes
 }
 
-pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: &[DonationRow]) {
+/// Returns the [`Viewport`] it drew, which `App` records on the view.
+pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView) -> Viewport {
+    let rows = &view.rows;
     if rows.is_empty() {
         frame.render_widget(Paragraph::new("No donations yet: n plans one"), area);
-        return;
+        return Viewport::of_height(usize::from(area.height));
     }
     let bold = Style::new().add_modifier(Modifier::BOLD);
-    let selected = view.selected.min(rows.len() - 1);
+    let selected = view.selected_index().min(rows.len() - 1);
     let notes = notes(&rows[selected]);
     // The table takes a third of the height at most, so the selected
     // donation's lines and notes keep the rest.
     let height = usize::from(area.height);
     let table_room = rows.len().min((height.saturating_sub(1) / 3).max(3));
-    let offset = selected.saturating_sub(table_room - 1);
+    let viewport = viewport(view, rows.len(), table_room);
+    let offset = viewport.offset;
     let width = usize::from(area.width);
     let cells: Vec<Vec<String>> = rows.iter().map(row_cells).collect();
     let mut table = table::lines(&COLUMNS.iter().collect::<Vec<_>>(), &cells, width).into_iter();
@@ -177,6 +185,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView, rows: 
     }
     lines.extend(notes.into_iter().map(Line::from));
     frame.render_widget(Paragraph::new(lines), area);
+    viewport
 }
 
 #[cfg(test)]
@@ -345,7 +354,7 @@ pub(super) mod tests {
             "{:?}",
             app.status.message().map(|s| &s.text)
         );
-        let row = &app.donations[0];
+        let row = &app.donations_view.rows[0];
         assert_eq!(row.donation.value, Some(Cents(20_000)));
         assert_eq!(row.totals.gain, Cents(12_000));
     }
