@@ -2,15 +2,15 @@
 //! valued at that price.
 
 use super::cursor::{Cursor, Scroll, Viewport};
-use super::lots::dollars;
+use super::lots::{dollars, percent};
 use super::table::{self, Column};
-use super::{viewport, visible_rows};
+use super::{signed, viewport, visible_rows};
 use crate::summary::TickerSummary;
 use jluszcz_finance_utils::impl_scroll;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::Span;
 use ratatui::widgets::Paragraph;
 
 #[derive(Debug, Default)]
@@ -38,7 +38,7 @@ impl FundsView {
     }
 }
 
-const COLUMNS: [Column; 7] = [
+const COLUMNS: [Column; 8] = [
     Column::left("Ticker"),
     Column::right("Price"),
     Column::left("As of"),
@@ -46,21 +46,25 @@ const COLUMNS: [Column; 7] = [
     Column::right("Basis"),
     Column::right("Value"),
     Column::right("Gain"),
+    Column::right("Gain %"),
 ];
 
-fn cells(t: &TickerSummary) -> Vec<String> {
+fn cells(t: &TickerSummary) -> Vec<Span<'static>> {
     vec![
-        t.ticker.clone(),
+        t.ticker.clone().into(),
         t.price
             .as_ref()
-            .map_or_else(|| "—".to_string(), |p| p.price.usd()),
+            .map_or_else(|| "—".to_string(), |p| p.price.usd())
+            .into(),
         t.price
             .as_ref()
-            .map_or_else(|| "none yet".to_string(), |p| p.date.to_string()),
-        t.left.to_string(),
-        t.basis.usd_whole(),
-        dollars(t.value),
-        dollars(t.gain),
+            .map_or_else(|| "none yet".to_string(), |p| p.date.to_string())
+            .into(),
+        t.left.to_string().into(),
+        t.basis.usd_whole().into(),
+        dollars(t.value).into(),
+        signed(dollars(t.gain), t.gain),
+        signed(percent(t.gain, t.basis), t.gain),
     ]
 }
 
@@ -72,14 +76,16 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &FundsView) -> Viewpor
         return Viewport::of_height(usize::from(area.height));
     }
     let width = usize::from(area.width);
-    let cells: Vec<Vec<String>> = rows.iter().map(cells).collect();
-    let mut table = table::lines(&COLUMNS.iter().collect::<Vec<_>>(), &cells, width).into_iter();
+    let cells = rows.iter().map(cells).collect();
+    let mut table = table::fitted(&COLUMNS, cells, &["Gain %"], width).into_iter();
     let room = usize::from(area.height).saturating_sub(1).max(1);
     let viewport = viewport(view, rows.len(), room);
-    let mut lines = vec![Line::styled(
-        table.next().unwrap_or_default(),
-        Style::new().add_modifier(Modifier::BOLD),
-    )];
+    let mut lines = vec![
+        table
+            .next()
+            .unwrap_or_default()
+            .style(Style::new().add_modifier(Modifier::BOLD)),
+    ];
     lines.extend(visible_rows(table, viewport, view.selected_index()));
     frame.render_widget(Paragraph::new(lines), area);
     viewport
@@ -98,7 +104,15 @@ mod tests {
         press(&mut app, KeyCode::Char('3'));
         let text = screen(&mut app, 120, 20);
         let line = text.lines().find(|l| l.contains("TDF45")).unwrap();
-        for cell in ["$50.00", "2026-06-01", "20.000", "$350", "$1,000", "$650"] {
+        for cell in [
+            "$50.00",
+            "2026-06-01",
+            "20.000",
+            "$350",
+            "$1,000",
+            "$650",
+            "185.7%",
+        ] {
             assert!(line.contains(cell), "{cell} missing from {line:?}");
         }
     }
