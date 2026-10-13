@@ -73,6 +73,12 @@ pub struct Totals {
     pub gain: Cents,
 }
 
+/// `gain` as a share of `basis`, in tenths of a percent; none with no basis
+/// to measure it against.
+pub fn percent(gain: Cents, basis: Cents) -> Option<i64> {
+    (basis.0 > 0).then(|| round_div(i128::from(gain.0) * 1_000, i128::from(basis.0)))
+}
+
 /// Each part's basis, value and gain, each rounded on its own.
 pub fn lines(parts: &[Part], valuation: Valuation) -> Vec<Line> {
     parts
@@ -207,6 +213,18 @@ mod tests {
         };
         assert!(v.gains_over(Cents(333)));
         assert!(!v.gains_over(Cents(334)));
+    }
+
+    #[test]
+    fn a_gain_is_a_percent_of_its_basis_to_a_tenth() {
+        assert_eq!(percent(Cents(45_000), Cents(30_000)), Some(1_500));
+        assert_eq!(percent(Cents(1), Cents(3)), Some(333));
+        assert_eq!(percent(Cents(-1_000), Cents(8_000)), Some(-125));
+    }
+
+    #[test]
+    fn a_gain_on_no_basis_has_no_percent() {
+        assert_eq!(percent(Cents(1_000), Cents::ZERO), None);
     }
 
     #[test]

@@ -36,6 +36,24 @@ pub(super) fn fixture_db() -> Db {
     db
 }
 
+/// The color `text` is drawn in, on the first row holding `row` as well.
+pub(super) fn fg_of(app: &mut App, row: &str, text: &str) -> ratatui::style::Color {
+    use jluszcz_finance_utils::tui::app::App as _;
+    let buf = draw_buffer(120, 24, |f| app.render(f));
+    for y in 0..buf.area.height {
+        let symbols: Vec<&str> = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+        let line = symbols.concat();
+        if !line.contains(row) {
+            continue;
+        }
+        if let Some(at) = line.find(text) {
+            let x = line[..at].chars().count();
+            return buf[(u16::try_from(x).unwrap(), y)].fg;
+        }
+    }
+    panic!("no row holds both {row:?} and {text:?}");
+}
+
 pub(super) fn app() -> App {
     App::new(fixture_db(), today()).unwrap()
 }

@@ -2,16 +2,16 @@
 //! one draws on.
 
 use super::cursor::{Cursor, Scroll, Viewport};
+use super::lots::percent;
 use super::table::{self, Column};
-use super::{viewport, visible_rows};
-use crate::money::Cents;
+use super::{signed, viewport, visible_rows};
 use crate::shares::Shares;
 use crate::summary::{DonationRow, LineRow};
 use jluszcz_finance_utils::impl_scroll;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 #[derive(Debug, Default)]
@@ -22,39 +22,46 @@ pub(super) struct DonationsView {
 
 impl_scroll!(DonationsView, rows);
 
-const COLUMNS: [Column; 7] = [
+const COLUMNS: [Column; 8] = [
     Column::left("Date"),
     Column::left("Ticker"),
     Column::right("Shares"),
     Column::right("Value"),
     Column::right("Basis"),
     Column::right("Gain"),
+    Column::right("Gain %"),
     Column::left("Claimed"),
 ];
 
-const LINE_COLUMNS: [Column; 7] = [
+const LINE_COLUMNS: [Column; 8] = [
     Column::left("Bought"),
     Column::right("Shares"),
     Column::right("Price"),
     Column::right("Basis"),
     Column::right("Value"),
     Column::right("Gain"),
+    Column::right("Gain %"),
     Column::left("Term"),
 ];
 
 /// The lines under the selected donation are indented by this much.
 const INDENT: &str = "  ";
 
-/// A plan's value and gain are marked `~`: they are at today's price.
-fn approx(plan: bool, c: Cents) -> String {
-    if plan {
-        format!("~{}", c.usd())
+/// The gain's percent is given up when a row will not fit, since the gain
+/// itself stays.
+const GIVEN_UP: [&str; 1] = ["Gain %"];
+
+/// A plan's value and gain are marked `~`: they are at today's price. A
+/// figure that is missing, `—`, is not approximate.
+fn approx(plan: bool, text: String) -> String {
+    if plan && text != "—" {
+        format!("~{text}")
     } else {
-        c.usd()
+        text
     }
 }
 
-fn row_cells(r: &DonationRow) -> Vec<String> {
+fn row_cells(r: &DonationRow) -> Vec<Span<'static>> {
     let plan = r.donation.is_plan();
     let claimed = if plan {
         "plan"
@@ -63,30 +70,35 @@ fn row_cells(r: &DonationRow) -> Vec<String> {
     } else {
         ""
     };
+    let gain = Some(r.totals.gain);
     vec![
-        r.donation.date.to_string(),
-        r.donation.ticker.clone(),
-        r.donation.shares.to_string(),
-        approx(plan, r.totals.value),
-        r.totals.basis.usd(),
-        approx(plan, r.totals.gain),
-        claimed.to_string(),
+        r.donation.date.to_string().into(),
+        r.donation.ticker.clone().into(),
+        r.donation.shares.to_string().into(),
+        approx(plan, r.totals.value.usd()).into(),
+        r.totals.basis.usd().into(),
+        signed(approx(plan, r.totals.gain.usd()), gain),
+        signed(approx(plan, percent(gain, r.totals.basis)), gain),
+        claimed.into(),
     ]
 }
 
-fn line_cells(l: &LineRow, plan: bool) -> Vec<String> {
+fn line_cells(l: &LineRow, plan: bool) -> Vec<Span<'static>> {
+    let gain = Some(l.line.gain);
     vec![
-        l.lot.bought.to_string(),
-        l.line.shares.to_string(),
-        l.lot.price.usd(),
-        l.line.basis.usd(),
-        approx(plan, l.line.value),
-        approx(plan, l.line.gain),
+        l.lot.bought.to_string().into(),
+        l.line.shares.to_string().into(),
+        l.lot.price.usd().into(),
+        l.line.basis.usd().into(),
+        approx(plan, l.line.value.usd()).into(),
+        signed(approx(plan, l.line.gain.usd()), gain),
+        signed(approx(plan, percent(gain, l.line.basis)), gain),
         format!(
             "{}{}",
             if l.long_term { "LT" } else { "ST" },
             if l.manual { " *" } else { "" }
-        ),
+        )
+        .into(),
     ]
 }
 
@@ -124,9 +136,9 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView) -> Vie
     let table_room = rows.len().min((height.saturating_sub(1) / 3).max(3));
     let viewport = viewport(view, rows.len(), table_room);
     let width = usize::from(area.width);
-    let cells: Vec<Vec<String>> = rows.iter().map(row_cells).collect();
-    let mut table = table::lines(&COLUMNS.iter().collect::<Vec<_>>(), &cells, width).into_iter();
-    let mut lines = vec![Line::styled(table.next().unwrap_or_default(), bold)];
+    let cells = rows.iter().map(row_cells).collect();
+    let mut table = table::fitted(&COLUMNS, cells, &GIVEN_UP, width).into_iter();
+    let mut lines = vec![table.next().unwrap_or_default().style(bold)];
     lines.extend(visible_rows(table, viewport, selected));
     let r = &rows[selected];
     lines.push(Line::default());
@@ -134,19 +146,24 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView) -> Vie
         format!("── {} {} ──", r.donation.date, r.donation.ticker),
         bold,
     ));
-    let line_cells: Vec<Vec<String>> = r
+    let line_cells = r
         .lines
         .iter()
         .map(|l| line_cells(l, r.donation.is_plan()))
         .collect();
-    let mut line_table = table::lines(
-        &LINE_COLUMNS.iter().collect::<Vec<_>>(),
-        &line_cells,
+    let mut line_table = table::fitted(
+        &LINE_COLUMNS,
+        line_cells,
+        &GIVEN_UP,
         width.saturating_sub(INDENT.len()),
     )
     .into_iter()
-    .map(|text| format!("{INDENT}{text}"));
-    lines.push(Line::styled(line_table.next().unwrap_or_default(), bold));
+    .map(|line| {
+        let mut spans = vec![Span::raw(INDENT)];
+        spans.extend(line.spans);
+        Line::from(spans)
+    });
+    lines.push(line_table.next().unwrap_or_default().style(bold));
     // Table, blank, title, and column header are above the lines; the notes below.
     let room = height
         .saturating_sub(1 + table_room + 3 + notes.len())
@@ -156,13 +173,13 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &DonationsView) -> Vie
     } else {
         r.lines.len()
     };
-    lines.extend(r.lines.iter().zip(line_table).take(shown).map(|(l, text)| {
-        let style = if !l.long_term || l.losing {
-            Style::new().fg(Color::Red)
+    // A line's gain keeps its own color over the line's red.
+    lines.extend(r.lines.iter().zip(line_table).take(shown).map(|(l, line)| {
+        if !l.long_term || l.losing {
+            line.style(Style::new().fg(Color::Red))
         } else {
-            Style::new()
-        };
-        Line::styled(text, style)
+            line
+        }
     }));
     if shown < r.lines.len() {
         lines.push(Line::from(format!(
@@ -182,7 +199,7 @@ pub(super) mod tests {
     use crate::money::Cents;
     use crate::shares::Shares;
     use crate::tui::app::App;
-    use crate::tui::test_support::{day, fixture_db, press, screen, today, type_text};
+    use crate::tui::test_support::{day, fg_of, fixture_db, press, screen, today, type_text};
     use jluszcz_finance_utils::tui::app::App as _;
     use ratatui::crossterm::event::KeyCode;
 
@@ -215,10 +232,11 @@ pub(super) mod tests {
     fn a_donation_shows_its_value_basis_and_gain_and_the_lots_it_draws_on() {
         let text = screen(&mut app_with_donation(), 120, 20);
         let row = text.lines().find(|l| l.contains("2026-01-05")).unwrap();
-        for cell in ["TDF45", "4.000", "180.00", "80.00", "100.00"] {
+        for cell in ["TDF45", "4.000", "180.00", "80.00", "100.00", "125.0%"] {
             assert!(row.contains(cell), "{cell} missing from {row:?}");
         }
         let line = text.lines().find(|l| l.contains("2020-01-10")).unwrap();
+        assert!(line.contains("125.0%"), "{line}");
         assert!(line.contains("LT") && line.contains('*'), "{line}");
         assert!(text.contains("* chosen by hand"), "{text}");
     }
@@ -275,7 +293,7 @@ pub(super) mod tests {
             rows[1].contains("2026-06-01") && rows[1].contains("plan"),
             "{rows:?}"
         );
-        assert_eq!(rows[1].matches('~').count(), 2, "{rows:?}");
+        assert_eq!(rows[1].matches('~').count(), 3, "{rows:?}");
     }
 
     #[test]
@@ -284,7 +302,7 @@ pub(super) mod tests {
         plan(&mut app, "100");
         let text = screen(&mut app, 120, 24);
         let line = text.lines().find(|l| l.contains("2021-01-10")).unwrap();
-        assert_eq!(line.matches('~').count(), 2, "{line}");
+        assert_eq!(line.matches('~').count(), 3, "{line}");
         press(&mut app, KeyCode::Up);
         let text = screen(&mut app, 120, 24);
         let line = text.lines().find(|l| l.contains("2020-01-10")).unwrap();
@@ -323,7 +341,33 @@ pub(super) mod tests {
             .map(|x| buf[(x, y)].fg)
             .collect::<Vec<_>>();
         assert!(fg.contains(&ratatui::style::Color::Red), "{fg:?}");
+        assert_eq!(fg_of(&mut app, "2026-03-01", "$10.00"), crate::tui::GAIN);
         assert!(screen(&mut app, 120, 24).contains("Red: short-term"));
+    }
+
+    #[test]
+    fn a_donation_below_its_basis_draws_its_loss_red() {
+        let db = fixture_db();
+        let lot = db.lots().unwrap()[0].id;
+        db.write_donation(
+            None,
+            &DonationInput {
+                ticker: "TDF45".into(),
+                date: day(2026, 1, 5),
+                shares: Shares::whole(4),
+                value: Some(Cents(6_000)),
+            },
+            &[Pick {
+                lot,
+                shares: Shares::whole(4),
+                manual: true,
+            }],
+        )
+        .unwrap();
+        let mut app = App::new(db, today()).unwrap();
+        press(&mut app, KeyCode::Char('2'));
+        assert_eq!(fg_of(&mut app, "2026-01-05", "-$20.00"), crate::tui::LOSS);
+        assert_eq!(fg_of(&mut app, "2026-01-05", "-25.0%"), crate::tui::LOSS);
     }
 
     #[test]

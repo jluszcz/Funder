@@ -2,6 +2,7 @@
 //! current price, and a live preview of the lots it would draw on.
 
 use super::form::{Field, Form, Outcome};
+use super::lots::percent;
 use crate::calc::plan_shares;
 use crate::db::Db;
 use crate::donate::{self, Plan};
@@ -93,11 +94,15 @@ impl PlanForm {
                     1 => "1 lot".to_string(),
                     n => format!("{n} lots"),
                 };
+                let pct = match percent(Some(t.gain), t.basis) {
+                    p if p == "—" => String::new(),
+                    p => format!(" (~{p})"),
+                };
                 let mut notes = vec![format!(
-                    "{lots} · basis {} · value ~{} · gain ~{}",
+                    "{lots} · basis {} · value ~{} · gain ~{}{pct}",
                     t.basis.usd(),
                     t.value.usd(),
-                    t.gain.usd()
+                    t.gain.usd(),
                 )];
                 if plan.selection.shortfall > Shares::ZERO {
                     notes.push(format!(
@@ -135,6 +140,7 @@ mod tests {
         let notes = p.notes().join("\n");
         assert!(notes.contains("2 lots"), "{notes}");
         assert!(notes.contains("gain ~"), "{notes}");
+        assert!(notes.contains("%)"), "{notes}");
     }
 
     #[test]

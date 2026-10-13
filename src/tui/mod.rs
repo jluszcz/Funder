@@ -15,12 +15,29 @@ mod text;
 mod test_support;
 
 use crate::db::Db;
+use crate::money::Cents;
 use anyhow::Result;
 use app::App;
 use chrono::NaiveDate;
 use cursor::{Scroll, Selection, Viewport};
 pub(super) use jluszcz_finance_utils::tui::centered;
 use jluszcz_finance_utils::tui::{cursor, search};
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+
+/// A gain, in MisterManager's green.
+const GAIN: Color = Color::Rgb(70, 170, 70);
+/// A loss, in MisterManager's red.
+const LOSS: Color = Color::Rgb(178, 34, 34);
+
+/// `text` in the color of `gain`'s sign; plain when there is no gain either way.
+fn signed(text: String, gain: Option<Cents>) -> Span<'static> {
+    match gain.map(|g| g.0.signum()) {
+        Some(1) => Span::styled(text, Style::new().fg(GAIN)),
+        Some(-1) => Span::styled(text, Style::new().fg(LOSS)),
+        _ => Span::raw(text),
+    }
+}
 
 /// Runs the screens until the user quits.
 pub fn run(db: Db, today: NaiveDate) -> Result<()> {
@@ -51,21 +68,33 @@ fn viewport(list: &impl Scroll, rows: usize, height: usize) -> Viewport {
 
 /// The table rows `viewport` shows, the selected one reversed.
 fn visible_rows(
-    rows: impl IntoIterator<Item = String>,
+    rows: impl IntoIterator<Item = Line<'static>>,
     viewport: Viewport,
     selected: usize,
-) -> impl Iterator<Item = ratatui::text::Line<'static>> {
-    use ratatui::style::{Modifier, Style};
+) -> impl Iterator<Item = Line<'static>> {
+    use ratatui::style::Modifier;
     rows.into_iter()
         .enumerate()
         .skip(viewport.offset)
         .take(viewport.height)
-        .map(move |(i, text)| {
-            let style = if i == selected {
-                Style::new().add_modifier(Modifier::REVERSED)
+        .map(move |(i, line)| {
+            if i == selected {
+                line.patch_style(Style::new().add_modifier(Modifier::REVERSED))
             } else {
-                Style::new()
-            };
-            ratatui::text::Line::styled(text, style)
+                line
+            }
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_gain_is_green_a_loss_red_and_neither_plain() {
+        assert_eq!(signed("+".into(), Some(Cents(1))).style.fg, Some(GAIN));
+        assert_eq!(signed("-".into(), Some(Cents(-1))).style.fg, Some(LOSS));
+        assert_eq!(signed("0".into(), Some(Cents::ZERO)).style.fg, None);
+        assert_eq!(signed("—".into(), None).style.fg, None);
+    }
 }

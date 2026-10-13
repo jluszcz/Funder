@@ -4,7 +4,8 @@ use super::cursor::{Cursor, Scroll, Viewport};
 use super::help;
 use super::search::{Search, SearchBox};
 use super::table::{self, Column};
-use super::{viewport, visible_rows};
+use super::{signed, viewport, visible_rows};
+use crate::calc::gain;
 use crate::id::LotId;
 use crate::money::Cents;
 use crate::shares::Shares;
@@ -12,7 +13,7 @@ use crate::summary::LotRow;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 #[derive(Debug, Default)]
@@ -105,7 +106,19 @@ pub(super) fn dollars(c: Option<Cents>) -> String {
     c.map_or_else(|| "—".to_string(), Cents::usd_whole)
 }
 
-const COLUMNS: [Column; 9] = [
+/// A gain as a percent of its basis, to a tenth.
+pub(super) fn percent(gain: Option<Cents>, basis: Cents) -> String {
+    match gain.and_then(|g| gain::percent(g, basis)) {
+        Some(tenths) => {
+            let sign = if tenths < 0 { "-" } else { "" };
+            let abs = tenths.unsigned_abs();
+            format!("{sign}{}.{}%", abs / 10, abs % 10)
+        }
+        None => "—".to_string(),
+    }
+}
+
+const COLUMNS: [Column; 10] = [
     Column::left("Bought"),
     Column::left("Ticker"),
     Column::right("Shares"),
@@ -114,37 +127,33 @@ const COLUMNS: [Column; 9] = [
     Column::right("Basis"),
     Column::right("Value"),
     Column::right("Gain"),
+    Column::right("Gain %"),
     Column::left("LT"),
 ];
-/// The lot's whole size: the first column given up when the row will not
-/// fit, since `Left` is what is still held.
-const SHARES: usize = 2;
+/// The columns given up, in turn, when the row will not fit: the lot's whole
+/// size, since `Left` is what is still held, then the gain's percent, since
+/// the gain itself stays.
+const GIVEN_UP: [&str; 2] = ["Shares", "Gain %"];
 
-fn cells(r: &LotRow) -> Vec<String> {
+fn cells(r: &LotRow) -> Vec<Span<'static>> {
     vec![
-        r.lot.bought.to_string(),
-        r.lot.ticker.clone(),
-        r.lot.shares.to_string(),
-        r.left.to_string(),
-        r.lot.price.usd(),
-        r.basis.usd_whole(),
-        dollars(r.value),
-        dollars(r.gain),
-        if r.long_term { "LT" } else { "ST" }.to_string(),
+        r.lot.bought.to_string().into(),
+        r.lot.ticker.clone().into(),
+        r.lot.shares.to_string().into(),
+        r.left.to_string().into(),
+        r.lot.price.usd().into(),
+        r.basis.usd_whole().into(),
+        dollars(r.value).into(),
+        signed(dollars(r.gain), r.gain),
+        signed(percent(r.gain, r.basis), r.gain),
+        if r.long_term { "LT" } else { "ST" }.into(),
     ]
 }
 
 /// The header and each row, spread across `width`.
-fn table(rows: &[LotRow], width: usize) -> (String, Vec<String>) {
-    let mut cells: Vec<Vec<String>> = rows.iter().map(cells).collect();
-    let mut columns: Vec<&Column> = COLUMNS.iter().collect();
-    if table::natural_width(&columns, &cells) > width {
-        columns.remove(SHARES);
-        for row in &mut cells {
-            row.remove(SHARES);
-        }
-    }
-    let mut lines = table::lines(&columns, &cells, width).into_iter();
+fn table(rows: &[LotRow], width: usize) -> (Line<'static>, Vec<Line<'static>>) {
+    let cells = rows.iter().map(cells).collect();
+    let mut lines = table::fitted(&COLUMNS, cells, &GIVEN_UP, width).into_iter();
     let header = lines.next().unwrap_or_default();
     (header, lines.collect())
 }
@@ -167,10 +176,7 @@ pub(super) fn render(frame: &mut Frame, area: Rect, view: &LotsView) -> Viewport
     let (header, lines) = table(rows, width);
     let room = usize::from(area.height).saturating_sub(1).max(1);
     let viewport = viewport(view, rows.len(), room);
-    let mut drawn = vec![Line::styled(
-        header,
-        Style::new().add_modifier(Modifier::BOLD),
-    )];
+    let mut drawn = vec![header.style(Style::new().add_modifier(Modifier::BOLD))];
     drawn.extend(visible_rows(lines, viewport, view.selected_index()));
     frame.render_widget(Paragraph::new(drawn), area);
     viewport
@@ -181,8 +187,9 @@ pub(super) mod tests {
     use crate::db::NewLot;
     use crate::money::Cents;
     use crate::shares::Shares;
+    use crate::tui::GAIN;
     use crate::tui::app::App;
-    use crate::tui::test_support::{app, day, fixture_db, screen, today};
+    use crate::tui::test_support::{app, day, fg_of, fixture_db, screen, today};
 
     /// The fixture plus 1,000 TDF45 shares at $1,200 bought in 2020, with
     /// TDF45 at $3,000: a seven-figure basis, value, and gain.
@@ -215,9 +222,12 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn a_row_too_wide_for_the_screen_gives_up_the_lots_size_and_keeps_its_term() {
+    fn a_row_too_wide_for_the_screen_gives_up_the_lots_size_and_gain_percent_and_keeps_its_term() {
         let text = screen(&mut app_with_large_figures(), 88, 20);
-        assert!(!text.contains("Shares"), "{text}");
+        assert!(
+            !text.contains("Shares") && !text.contains("Gain %"),
+            "{text}"
+        );
         let big = text.lines().find(|l| l.contains("2020-06-01")).unwrap();
         assert!(big.contains("$1,800,000   LT"), "{big}");
     }
@@ -234,9 +244,18 @@ pub(super) mod tests {
         let text = screen(&mut app(), 120, 20);
         assert!(text.contains("Bought"), "{text}");
         let row = text.lines().find(|l| l.contains("2020-01-10")).unwrap();
-        for cell in ["TDF45", "10.000", "20.00", "200", "500", "300", "LT"] {
+        for cell in [
+            "TDF45", "10.000", "20.00", "200", "500", "300", "150.0%", "LT",
+        ] {
             assert!(row.contains(cell), "{cell} missing from {row:?}");
         }
+    }
+
+    #[test]
+    fn a_lots_gain_and_its_percent_are_drawn_green() {
+        let mut app = app();
+        assert_eq!(fg_of(&mut app, "2020-01-10", "$300"), GAIN);
+        assert_eq!(fg_of(&mut app, "2020-01-10", "150.0%"), GAIN);
     }
 
     #[test]

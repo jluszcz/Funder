@@ -16,9 +16,9 @@ funder backup               # upload the database to S3 if a backup is due
 funder import <report.xlsx> # add a brokerage activity report's purchases and gifts
 ```
 
-`1` shows the Lots: every purchase with shares left, what is left of it, and its gain at the
-current price; `s` shows the used-up ones too. `a`, `e`, and `d` add, edit, and delete a lot; `?`
-lists every key.
+`1` shows the Lots: every purchase with shares left, what is left of it, and its gain, in dollars
+and percent, at the current price; `s` shows the used-up ones too. `a`, `e`, and `d` add, edit,
+and delete a lot; `?` lists every key.
 
 `2` shows the Donations. `n` plans one from a dollar target, drawing on the long-term lots with the
 highest gain; `r` records it once the shares have moved; `c` marks it claimed.
