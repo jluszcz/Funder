@@ -93,23 +93,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
     }
   }
 
-  # A month-old backup is a restore point, and Infrequent Access prices that:
-  # cheaper to keep, dearer to read, and nothing reads one on a schedule. 30
-  # days is IA's minimum billable duration. IA also bills a 128 KB floor per
-  # object and S3 declines to transition anything smaller, so on a small
-  # database this rule does nothing, which is the right way round.
-  rule {
-    id     = "transition-ia"
-    status = "Enabled"
-
-    filter {}
-
-    transition {
-      days          = 30
-      storage_class = "STANDARD_IA"
-    }
-  }
-
   rule {
     id     = "expire-noncurrent"
     status = "Enabled"
@@ -124,6 +107,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   rule {
     id     = "abort-mpu"
     status = "Enabled"
+
+    filter {}
 
     abort_incomplete_multipart_upload {
       days_after_initiation = 7
